@@ -82,7 +82,7 @@ thermodynamic occupations. For example, an ERFC filter smoothly suppresses
 states above an energy scale:
 
 $$
-f(E)=\frac12\operatorname{erfc}\!\left(\frac{E-\mu}{\sigma}\right).
+f(E)=\frac12\mathrm{erfc}\!\left(\frac{E-\mu}{\sigma}\right).
 $$
 
 In this example, `CUTOFF_MU` sets the filter center and `CUTOFF_SIGMA` its energy
@@ -838,7 +838,7 @@ $$
 在某一能量附近平滑降低高能态的权重：
 
 $$
-f(E)=\frac12\operatorname{erfc}\!\left(\frac{E-\mu}{\sigma}\right).
+f(E)=\frac12\mathrm{erfc}\!\left(\frac{E-\mu}{\sigma}\right).
 $$
 
 在这个例子中，`CUTOFF_MU` 是过滤中心，`CUTOFF_SIGMA` 是能量宽度。它们用于
