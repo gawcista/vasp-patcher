@@ -1,0 +1,4361 @@
+diff --git a/src/mlwf.F b/src/mlwf.F
+--- a/src/mlwf.F
++++ b/src/mlwf.F
+@@ -161,6 +161,10 @@
+       REAL(q) :: MU(2)
+       !> Parameter for broadening of erfc or gaussian for each spin channel
+       REAL(q) :: SIGMA(2)
++      LOGICAL :: MU_EXPLICIT = .FALSE.
++      LOGICAL :: SIGMA_EXPLICIT = .FALSE.
++      LOGICAL :: TYPE_EXPLICIT = .FALSE.
++      LOGICAL :: TYPE_VALID = .TRUE.
+    END TYPE cutoff_type
+ 
+    TYPE(cutoff_type),SAVE :: CUTOFF_DES
+@@ -275,10 +279,11 @@
+    ! local variables
+    REAL(q) :: MU(2), SIGMA(2)
+    INTEGER :: CUTOFF_TYPE
++   INTEGER :: CUTOFF_MU_COUNT, CUTOFF_SIGMA_COUNT, CUTOFF_TYPE_COUNT
+    INTEGER IPOS
+    INTEGER IDUM, N, IERR
+    REAL(q) RDUM
+-   LOGICAL LOPEN,LDUM
++   LOGICAL CUTOFF_TYPE_VALID,LOPEN,LDUM
+    CHARACTER (LEN=20) :: CUTOFF_TYPE_STR
+    CHARACTER (LEN=255) :: BUFLINE
+    LOGICAL  :: LWIN_FOUND
+@@ -393,22 +398,34 @@
+    ! Location of the cut-off function
+    MU = HUGE(0._q)
+    CALL PROCESS_INCAR(LOPEN, IU0, IU5, 'CUTOFF_MU', MU, INFO%ISPIN, IERR, WRITEXMLINCAR, FOUNDNUMBER=IDUM)
++   CUTOFF_MU_COUNT = IDUM
+    IF (IDUM < INFO%ISPIN) MU(2) = MU(1)
+    ! Width of the cut-off function
+    SIGMA = HUGE(0._q)
+    CALL PROCESS_INCAR(LOPEN, IU0, IU5, 'CUTOFF_SIGMA', SIGMA, INFO%ISPIN, IERR, WRITEXMLINCAR, FOUNDNUMBER=IDUM)
++   CUTOFF_SIGMA_COUNT = IDUM
+    IF (IDUM < INFO%ISPIN) SIGMA(2) = SIGMA(1)
+    ! Type of the cut-off function
+    CUTOFF_TYPE_STR = '--'
+    CALL PROCESS_INCAR(LOPEN, IU0, IU5, 'CUTOFF_TYPE', CUTOFF_TYPE_STR, 20, IERR, WRITEXMLINCAR, FOUNDNUMBER=IDUM)
++   CUTOFF_TYPE_COUNT = IDUM
+    CUTOFF_TYPE = CUTOFF_NONE
++   CUTOFF_TYPE_VALID = .TRUE.
+    IF (CUTOFF_TYPE_STR /= '--') THEN
++      CUTOFF_TYPE_VALID = .FALSE.
++      IF (NOCCUR(LOWERCASE(CUTOFF_TYPE_STR),'none',-1))     CUTOFF_TYPE = CUTOFF_NONE
+       IF (NOCCUR(LOWERCASE(CUTOFF_TYPE_STR),'erfc',-1))     CUTOFF_TYPE = CUTOFF_ERFC
+       IF (NOCCUR(LOWERCASE(CUTOFF_TYPE_STR),'gaussian',-1)) CUTOFF_TYPE = CUTOFF_GAUSSIAN
+       IF (NOCCUR(LOWERCASE(CUTOFF_TYPE_STR),'fermi',-1))    CUTOFF_TYPE = CUTOFF_FERMI
+       IF (NOCCUR(LOWERCASE(CUTOFF_TYPE_STR),'num_wann',-1)) CUTOFF_TYPE = CUTOFF_NUM_WANN
++      CUTOFF_TYPE_VALID = NOCCUR(LOWERCASE(CUTOFF_TYPE_STR),'none',-1)     .OR. &
++                          NOCCUR(LOWERCASE(CUTOFF_TYPE_STR),'erfc',-1)     .OR. &
++                          NOCCUR(LOWERCASE(CUTOFF_TYPE_STR),'gaussian',-1) .OR. &
++                          NOCCUR(LOWERCASE(CUTOFF_TYPE_STR),'fermi',-1)    .OR. &
++                          NOCCUR(LOWERCASE(CUTOFF_TYPE_STR),'num_wann',-1)
+    ENDIF
+-   CALL CUTOFF_DES_INIT(CUTOFF_DES,CUTOFF_TYPE,INFO%ISPIN,MU,SIGMA,NUM_WANN)
++   CALL CUTOFF_DES_INIT(CUTOFF_DES,CUTOFF_TYPE,INFO%ISPIN,MU,SIGMA,NUM_WANN, &
++      CUTOFF_MU_COUNT>0,CUTOFF_SIGMA_COUNT>0,CUTOFF_TYPE_COUNT>0,CUTOFF_TYPE_VALID)
+ 
+    ! Switch on the PEAD routines
+    IF (MLWFRUN()) THEN
+@@ -484,9 +501,9 @@
+    LOGICAL,PARAMETER :: WRITE_AMN = .TRUE.
+    LOGICAL,PARAMETER :: WRITE_EIG = .TRUE.
+    COMPLEX(q),ALLOCATABLE :: A_MATRIX_TMP(:,:,:,:)
+-   LOGICAL :: MY_LWANNIER90_RUN
++   LOGICAL :: ESTIMATE_CUTOFF, MY_LWANNIER90_RUN
+    INTEGER :: NUM_WANN_TMP
+-   INTEGER :: IB,IBP,IW,IK,IS
++   INTEGER :: IW,IK,IS
+    INTEGER :: NCDIJ, NKPTS, NB_TOT
+ 
+    PROFILING_START('mlwf_main')
+@@ -561,25 +578,24 @@
+        P_MLWF%PROJ_MODE==PROJ_LOCPROJ.OR.&
+        P_MLWF%PROJ_MODE==PROJ_LOCPROJAUTO.OR.&
+        LWANNIER90_AUTO_WINDOW) THEN
+-      CALL CUTOFF_DES_ESTIMATE(CUTOFF_DES,WDES,W,P_MLWF%NUM_WANN,KPOINTS,INFO,IO)
++      ESTIMATE_CUTOFF = .TRUE.
++      IF (P_MLWF%PROJ_MODE==PROJ_SCDM) CALL CUTOFF_DES_PREPARE_SCDM( &
++         CUTOFF_DES,P_MLWF%EXCLUDE_BAND,P_MLWF%NUM_WANN,ESTIMATE_CUTOFF,IO)
++      IF (ESTIMATE_CUTOFF) CALL CUTOFF_DES_ESTIMATE(CUTOFF_DES,WDES,W,P_MLWF%NUM_WANN,KPOINTS,INFO,IO)
+       CALL CUTOFF_DES_PRINT(CUTOFF_DES,IO)
+    ENDIF
+    IF (LWANNIER90_AUTO_WINDOW) CALL ESTIMATE_AUTO_WINDOW(MLWF,W)
+    ! Compute AMN
+    IF (P_MLWF%PROJ_MODE==PROJ_SCDM) THEN
+-      CALL CALC_WANNIER_TRAFO_SCDM(W,P_MLWF%NUM_WANN,A_MATRIX_TMP,P,LATT_CUR,P_MLWF%NKPTS,P_MLWF%kpt_latt,IO)
+-      ALLOCATE(MLWF%A_matrix(MLWF%NB_TOT-MLWF%NEXCLB,MLWF%NUM_WANN,MLWF%NKPTS,MLWF%ISPIN))
+-      MLWF%A_matrix = (0.0_q,0.0_q)
+-      ! Need to transfer the data to what wannier90 expects
+-      DO IW = 1, MLWF%NUM_WANN
+-         IBP = 0
+-         DO IB = 1, MLWF%NB_TOT
+-            IF (MLWF%EXCLUDE_BAND(IB)) CYCLE
+-            IBP = IBP + 1
+-            MLWF%A_matrix(IBP,IW,:,:) = A_MATRIX_TMP(IB,IW,:,:)
+-         ENDDO
+-      ENDDO
+-      DEALLOCATE(A_MATRIX_TMP)
++      CALL CALC_WANNIER_TRAFO_SCDM(W,P_MLWF%NUM_WANN,A_MATRIX_TMP,P,LATT_CUR,P_MLWF%NKPTS, &
++         P_MLWF%kpt_latt,IO,EXCLUDE_BAND=P_MLWF%EXCLUDE_BAND)
++      IF (SIZE(A_MATRIX_TMP,1) /= P_MLWF%NB_TOT-P_MLWF%NEXCLB .OR. &
++          SIZE(A_MATRIX_TMP,2) /= P_MLWF%NUM_WANN .OR. &
++          SIZE(A_MATRIX_TMP,3) /= P_MLWF%NKPTS .OR. &
++          SIZE(A_MATRIX_TMP,4) /= P_MLWF%ISPIN) CALL vtutor%error( &
++         "MLWF_MAIN: inconsistent compact SCDM transformation shape")
++      IF (ALLOCATED(P_MLWF%A_matrix)) DEALLOCATE(P_MLWF%A_matrix)
++      CALL MOVE_ALLOC(A_MATRIX_TMP, P_MLWF%A_matrix)
+    ELSE IF (P_MLWF%PROJ_MODE/=PROJ_UNKNOWN) THEN
+       CALL LPRJ_WRITE_FUNCTIONS(P_MLWF%LPRJ_functions,MLWF%NRSPINORS==2,IO)
+       CALL MLWF_CALC_AMN(P_MLWF,WDES,W,P,CQIJ,T_INFO,LATT_CUR,INFO,IO)
+@@ -809,19 +825,94 @@
+  END SUBROUTINE MLWF_WRITE_FINAL
+ 
+  !> Initialize the cutoff descriptor with all the necessary information
+- SUBROUTINE CUTOFF_DES_INIT(SELF,CUTOFF_ITYPE,ISPIN,MU,SIGMA,NUM_WANN)
++ SUBROUTINE CUTOFF_DES_INIT(SELF,CUTOFF_ITYPE,ISPIN,MU,SIGMA,NUM_WANN, &
++                            MU_EXPLICIT,SIGMA_EXPLICIT,TYPE_EXPLICIT,TYPE_VALID)
+    TYPE(cutoff_type) :: SELF
+    INTEGER,INTENT(IN) :: ISPIN
+    INTEGER,INTENT(IN) :: CUTOFF_ITYPE
+    REAL(q),INTENT(IN) :: MU(2)
+    REAL(q),INTENT(IN) :: SIGMA(2)
+    INTEGER,INTENT(IN) :: NUM_WANN
++   LOGICAL,INTENT(IN) :: MU_EXPLICIT,SIGMA_EXPLICIT,TYPE_EXPLICIT,TYPE_VALID
+    SELF%TYPE = CUTOFF_ITYPE
+    SELF%ISPIN = ISPIN
+    SELF%MU = MU
+    SELF%SIGMA = SIGMA
+    SELF%NUM_WANN = NUM_WANN
++   SELF%MU_EXPLICIT = MU_EXPLICIT
++   SELF%SIGMA_EXPLICIT = SIGMA_EXPLICIT
++   SELF%TYPE_EXPLICIT = TYPE_EXPLICIT
++   SELF%TYPE_VALID = TYPE_VALID
+  END SUBROUTINE CUTOFF_DES_INIT
++
++ !> Select safe SCDM cutoff semantics when Wannier90 excludes bands
++ SUBROUTINE CUTOFF_DES_PREPARE_SCDM(CUTOFF_DES,EXCLUDE_BAND,NUM_WANN,NEEDS_ESTIMATE,IO)
++   USE tutor, ONLY : vtutor
++   USE base,   ONLY : in_struct
++
++   TYPE(cutoff_type),INTENT(INOUT) :: CUTOFF_DES
++   LOGICAL,INTENT(IN) :: EXCLUDE_BAND(:)
++   INTEGER,INTENT(IN) :: NUM_WANN
++   LOGICAL,INTENT(OUT) :: NEEDS_ESTIMATE
++   TYPE(in_struct),INTENT(IN) :: IO
++
++   INTEGER :: NB_SCDM
++   LOGICAL :: COMPLETE,EXPLICIT_REQUEST
++
++   NEEDS_ESTIMATE = .TRUE.
++   IF (.NOT. ANY(EXCLUDE_BAND)) RETURN
++
++   NB_SCDM = COUNT(.NOT. EXCLUDE_BAND)
++   EXPLICIT_REQUEST = CUTOFF_DES%MU_EXPLICIT .OR. CUTOFF_DES%SIGMA_EXPLICIT .OR. &
++                      CUTOFF_DES%TYPE_EXPLICIT
++   NEEDS_ESTIMATE = .FALSE.
++
++   IF (.NOT. EXPLICIT_REQUEST) THEN
++      IF (NB_SCDM == NUM_WANN) THEN
++         CUTOFF_DES%TYPE = CUTOFF_NONE
++         IF (IO%IU6>=0) WRITE(IO%IU6,'(A)') &
++            ' SCDM: no energy cutoff is applied within the selected subspace (NB_SCDM == NUM_WANN)'
++         RETURN
++      ENDIF
++      CALL vtutor%error( &
++         "SCDM with exclude_bands: automatic cutoff estimation is not supported for an entangled compact subspace")
++   ENDIF
++
++   IF (.NOT. CUTOFF_DES%TYPE_VALID) CALL vtutor%error( &
++      "SCDM with exclude_bands: explicit cutoff parameters are incomplete or the cutoff type is unsupported")
++
++   ! Historically explicit MU and SIGMA without CUTOFF_TYPE select ERFC.
++   IF (.NOT. CUTOFF_DES%TYPE_EXPLICIT .AND. CUTOFF_DES%MU_EXPLICIT .AND. &
++       CUTOFF_DES%SIGMA_EXPLICIT) CUTOFF_DES%TYPE = CUTOFF_ERFC
++
++   SELECT CASE (CUTOFF_DES%TYPE)
++      CASE (CUTOFF_NONE)
++         COMPLETE = CUTOFF_DES%TYPE_EXPLICIT
++      CASE (CUTOFF_ERFC,CUTOFF_GAUSSIAN)
++         COMPLETE = CUTOFF_DES%MU_EXPLICIT .AND. CUTOFF_DES%SIGMA_EXPLICIT
++      CASE (CUTOFF_FERMI)
++         COMPLETE = CUTOFF_DES%MU_EXPLICIT
++      CASE (CUTOFF_NUM_WANN)
++         COMPLETE = CUTOFF_DES%SIGMA_EXPLICIT
++      CASE DEFAULT
++         COMPLETE = .FALSE.
++   END SELECT
++
++   IF (.NOT. COMPLETE) CALL vtutor%error( &
++      "SCDM with exclude_bands: explicit cutoff parameters are incomplete " // &
++      "(TYPE=erfc/gaussian require CUTOFF_MU and CUTOFF_SIGMA, TYPE=fermi requires CUTOFF_MU, " // &
++      "TYPE=num_wann requires CUTOFF_SIGMA); automatic estimation is disabled")
++
++   IF (IO%IU6>=0) THEN
++      IF (CUTOFF_DES%TYPE==CUTOFF_NONE) THEN
++         WRITE(IO%IU6,'(A)') &
++            ' SCDM: explicit CUTOFF_TYPE = none, unit weights are used for the selected bands'
++      ELSE
++         WRITE(IO%IU6,'(A)') &
++            ' SCDM: explicit cutoff parameters are used, evaluated on the selected bands'
++      ENDIF
++   ENDIF
++ END SUBROUTINE CUTOFF_DES_PREPARE_SCDM
+ 
+  !> @brief Estimate cutoff descriptor which contains the necessary information
+  !> to use the SCDM method or to obtain unitary transformations from LOCPROJ
+@@ -1051,6 +1142,10 @@
+    IF (MLWF%NUM_WANN == 0) THEN
+       CALL vtutor%error('NUM_WANN must be different from zero when using projections from Wannier90.')
+    ENDIF
++   ! MLWF%NUM_WANN is the effective number (INCAR value or LPRJ heuristic); the
++   ! INCAR NUM_WANN read by MLWF_READER may be zero. CUTOFF_NUM_WANN uses this
++   ! value as an eigenvalue index in the compact band list, so it must match.
++   CUTOFF_DES%NUM_WANN = MLWF%NUM_WANN
+ 
+    MLWF%mp_grid(1)=KPOINTS%NKPX
+    MLWF%mp_grid(2)=KPOINTS%NKPY
+@@ -3182,6 +3277,7 @@
+     USE wave_high
+     USE full_kpoints
+     USE pead, ONLY : LUSEPEAD,WDES_FULL_PEAD,PEAD_WA_ROTATE
++    USE tutor, ONLY : vtutor
+     TYPE(wavespin),INTENT(IN) :: W
+     TYPE(potcar),INTENT(IN) :: P(:) !< Potcar datastructure
+     TYPE(latt),INTENT(IN) :: LATT_CUR !< Current lattice datastructure
+@@ -3189,7 +3285,7 @@
+     !> Unit of the file to write the real-space WF. Negative number to skip writting
+     INTEGER,INTENT(IN) :: IU
+     REAL(q),INTENT(IN) :: K(3)  !< Coordinates of the k-point for which to write the real-space WF
+-    LOGICAL,OPTIONAL :: EXCLUDE_BAND(W%WDES%NB_TOT)
++    LOGICAL,OPTIONAL,INTENT(IN) :: EXCLUDE_BAND(:)
+     !> Optionally return the orbitals for this k-point in a single array
+     GDEF,OPTIONAL,INTENT(OUT) :: WVFN_BANDS(:,:)
+     !> Optionally return the eigenvalues of this array
+@@ -3203,7 +3299,7 @@
+ 
+     TYPE(rotation_handle) :: ROT_HANDLE
+ 
+-    INTEGER NK,NB,ISTRIP,ISPINOR,NPW,NPWS
++    INTEGER NK,NB,NB_ORIG,NB_OUTPUT,ISTRIP,ISPINOR,NPW,NPWS
+     INTEGER NX,NY,NZ,NC,NGX,NGY,NGZ,IND,I,NWRITTEN
+     INTEGER, PARAMETER :: NSTRIP=1
+ 
+@@ -3235,7 +3331,6 @@
+        CALL PEAD_WA_ROTATE(WP,P,LATT_CUR,ISP,WK)
+     ENDIF
+ 
+-    IF (PRESENT(CELEN)) CELEN = W%CELTOT(:,KPOINTS_FULL%NEQUIV(NK),ISP)
+     ALLOCATE(WSTRIP(NSTRIP))
+ 
+     ALLOCATE(WCOLLECT(NSTRIP*WP%WDES%NB_PAR))
+@@ -3244,6 +3339,30 @@
+     ENDDO
+ 
+     NPW = NGX*NGY*NGZ
++    NB_OUTPUT = W%WDES%NB_TOT
++    IF (PRESENT(EXCLUDE_BAND)) THEN
++       IF (SIZE(EXCLUDE_BAND) /= W%WDES%NB_TOT) CALL vtutor%error( &
++          "GET_WAVE_FUNCTIONS: inconsistent EXCLUDE_BAND shape")
++       NB_OUTPUT = COUNT(.NOT. EXCLUDE_BAND)
++    ENDIF
++    IF (PRESENT(WVFN_BANDS)) THEN
++       IF (SIZE(WVFN_BANDS,1) /= NPW*W%WDES%NRSPINORS .OR. SIZE(WVFN_BANDS,2) /= NB_OUTPUT) &
++          CALL vtutor%error("GET_WAVE_FUNCTIONS: inconsistent WVFN_BANDS shape")
++    ENDIF
++    IF (PRESENT(CELEN)) THEN
++       IF (SIZE(CELEN) /= NB_OUTPUT) &
++          CALL vtutor%error("GET_WAVE_FUNCTIONS: inconsistent CELEN shape")
++       NWRITTEN = 0
++       DO NB_ORIG = 1, W%WDES%NB_TOT
++          IF (PRESENT(EXCLUDE_BAND)) THEN
++             IF (EXCLUDE_BAND(NB_ORIG)) CYCLE
++          ENDIF
++          NWRITTEN = NWRITTEN + 1
++          CELEN(NWRITTEN) = W%CELTOT(NB_ORIG,KPOINTS_FULL%NEQUIV(NK),ISP)
++       ENDDO
++       IF (NWRITTEN /= NB_OUTPUT) &
++          CALL vtutor%error("GET_WAVE_FUNCTIONS: inconsistent number of eigenvalues written")
++    ENDIF
+     ALLOCATE(WVFN(NPW*W%WDES%NRSPINORS))
+ 
+     NWRITTEN=0
+@@ -3254,9 +3373,11 @@
+        ENDDO
+        CALL W1_GATHER_W1(WP,MIN(WDESK%NBANDS-NB+1,NSTRIP),WSTRIP,WCOLLECT)
+        DO ISTRIP=1,MIN(WDESK%NBANDS-NB+1,NSTRIP)*WP%WDES%NB_PAR
++          NB_ORIG = (NB-1)*WP%WDES%NB_PAR+ISTRIP
++          IF (NB_ORIG > W%WDES%NB_TOT) CYCLE
+           ! skip this band?
+           IF (PRESENT(EXCLUDE_BAND)) THEN
+-            IF (EXCLUDE_BAND((NB-1)*WP%WDES%NB_PAR+ISTRIP)) CYCLE
++            IF (EXCLUDE_BAND(NB_ORIG)) CYCLE
+           ENDIF
+           I=0; WVFN=0
+           ! might seem strange to duplicate these loops,
+@@ -3303,6 +3424,8 @@
+           IF (PRESENT(WVFN_BANDS)) WVFN_BANDS(:,NWRITTEN) = WVFN
+        ENDDO
+     ENDDO
++    IF (NWRITTEN /= NB_OUTPUT) &
++       CALL vtutor%error("GET_WAVE_FUNCTIONS: inconsistent number of bands written")
+ 
+     ! some deallocation to be done
+     CALL DEALLOCATE_ROT_HANDLE(ROT_HANDLE)
+@@ -3903,7 +4026,7 @@
+ !> @brief Calculates the Wannier transformation matrices according to the SCDM method.
+ !
+ !******************************************************************************
+- SUBROUTINE CALC_WANNIER_TRAFO_SCDM(W, NUM_WANN, T, P, LATT_CUR, NKPTS, VKPT, IO)
++ SUBROUTINE CALC_WANNIER_TRAFO_SCDM(W, NUM_WANN, T, P, LATT_CUR, NKPTS, VKPT, IO, EXCLUDE_BAND)
+     USE base,               ONLY  : in_struct
+     USE wave_struct_def,    ONLY  : wavespin
+     USE pseudo_struct_def,  ONLY  : potcar
+@@ -3920,28 +4043,82 @@
+     INTEGER,                   INTENT(IN)  :: NKPTS
+     REAL(q),                   INTENT(IN)  :: VKPT(3, NKPTS)
+     TYPE(in_struct),           INTENT(IN)  :: IO
++    LOGICAL, OPTIONAL,         INTENT(IN)  :: EXCLUDE_BAND(:)
+ 
+     GDEF, ALLOCATABLE    :: PSI(:, :)
+     GDEF, ALLOCATABLE    :: PSI_D_SCDM(:, :)
+     GDEF, ALLOCATABLE    :: WVFN_PHASE(:)
++    GDEF                 :: GDEF_ELEMENT
+     INTEGER              :: ISP
+     INTEGER              :: K_IDX
+     INTEGER              :: IB, IW
+     INTEGER              :: ANCHOR_IDX, J
+-    INTEGER, ALLOCATABLE :: PIVOT_UP(:),PIVOT_DW(:)
++    INTEGER, ALLOCATABLE :: BAND_MAP(:),PIVOT_UP(:),PIVOT_DW(:)
++    LOGICAL, ALLOCATABLE :: ACTIVE_EXCLUDE_BAND(:)
+     REAL(q)              :: NORM
+     LOGICAL              :: DO_WORK
+ 
+     INTEGER              :: IDX_UP, IDX_DW, CURRENT_PIVOT, NP
++    INTEGER              :: NB_SCDM
++    INTEGER(qi8)         :: BYTES_PER_GDEF, PSI_BYTES, SCDM_BYTES
+     REAL(q), ALLOCATABLE :: CUTOFF_FACTOR(:)
+     COMPLEX(q),ALLOCATABLE :: CELEN(:)
+     TYPE(RRQR_DECOMPOSER)  :: RANK_REVEAL_QR
+     INTEGER                :: INFO
+ 
+-    IF (NUM_WANN > W%WDES%NB_TOT) CALL vtutor%error( &
+-       "CALC_WANNIER_TRAFO_SCDM: Number of Wannier functions must not be larger than number of bands.")
+-
+-    ALLOCATE(T(W%WDES%NB_TOT, NUM_WANN, NKPTS, W%WDES%ISPIN))
++    ALLOCATE(ACTIVE_EXCLUDE_BAND(W%WDES%NB_TOT))
++    ACTIVE_EXCLUDE_BAND = .FALSE.
++    IF (PRESENT(EXCLUDE_BAND)) THEN
++       IF (SIZE(EXCLUDE_BAND) /= W%WDES%NB_TOT) CALL vtutor%error( &
++          "CALC_WANNIER_TRAFO_SCDM: inconsistent EXCLUDE_BAND shape")
++       ACTIVE_EXCLUDE_BAND = EXCLUDE_BAND
++    ENDIF
++
++    NB_SCDM = COUNT(.NOT. ACTIVE_EXCLUDE_BAND)
++    IF (NB_SCDM <= 0) CALL vtutor%error( &
++       "CALC_WANNIER_TRAFO_SCDM: at least one active band is required")
++    IF (NUM_WANN > NB_SCDM) CALL vtutor%error( &
++       "CALC_WANNIER_TRAFO_SCDM: Number of Wannier functions must not be larger than number of active bands.")
++    ALLOCATE(BAND_MAP(NB_SCDM))
++    J = 0
++    DO IB = 1, W%WDES%NB_TOT
++       IF (ACTIVE_EXCLUDE_BAND(IB)) CYCLE
++       J = J + 1
++       BAND_MAP(J) = IB
++    ENDDO
++    IF (J /= NB_SCDM) CALL vtutor%error( &
++       "CALC_WANNIER_TRAFO_SCDM: inconsistent compact band map")
++    IF (NB_SCDM > 1) THEN
++       IF (ANY(BAND_MAP(2:) <= BAND_MAP(:NB_SCDM-1))) CALL vtutor%error( &
++          "CALC_WANNIER_TRAFO_SCDM: compact band map is not ascending")
++    ENDIF
++
++    NP = W%WDES%GRID%RL%NP
++    BYTES_PER_GDEF = STORAGE_SIZE(GDEF_ELEMENT, KIND=qi8) / 8_qi8
++    PSI_BYTES = BYTES_PER_GDEF * INT(NP, qi8) * INT(W%WDES%NRSPINORS, qi8) * INT(NB_SCDM, qi8)
++    SCDM_BYTES = PSI_BYTES
++    IF (IO%IU6>=0) THEN
++       WRITE(IO%IU6,'(A,I0)') ' SCDM total bands       = ', W%WDES%NB_TOT
++       WRITE(IO%IU6,'(A,I0)') ' SCDM excluded bands    = ', COUNT(ACTIVE_EXCLUDE_BAND)
++       WRITE(IO%IU6,'(A,I0)') ' SCDM active bands      = ', NB_SCDM
++       WRITE(IO%IU6,'(A,I0)') ' SCDM real-space points = ', NP
++       WRITE(IO%IU6,'(A,I0)') ' SCDM spinor components = ', W%WDES%NRSPINORS
++       WRITE(IO%IU6,'(A,I0)') ' Estimated PSI bytes    = ', PSI_BYTES
++       WRITE(IO%IU6,'(A,I0)') ' Estimated SCDM bytes   = ', SCDM_BYTES
++    ENDIF
++    IF (IO%IU0>=0) THEN
++       WRITE(IO%IU0,'(A,I0)') ' SCDM total bands       = ', W%WDES%NB_TOT
++       WRITE(IO%IU0,'(A,I0)') ' SCDM excluded bands    = ', COUNT(ACTIVE_EXCLUDE_BAND)
++       WRITE(IO%IU0,'(A,I0)') ' SCDM active bands      = ', NB_SCDM
++       WRITE(IO%IU0,'(A,I0)') ' SCDM real-space points = ', NP
++       WRITE(IO%IU0,'(A,I0)') ' SCDM spinor components = ', W%WDES%NRSPINORS
++       WRITE(IO%IU0,'(A,I0)') ' Estimated PSI bytes    = ', PSI_BYTES
++       WRITE(IO%IU0,'(A,I0)') ' Estimated SCDM bytes   = ', SCDM_BYTES
++    ENDIF
++
++    ALLOCATE(T(NB_SCDM, NUM_WANN, NKPTS, W%WDES%ISPIN))
++    IF (SIZE(T,1) /= NB_SCDM) CALL vtutor%error( &
++       "CALC_WANNIER_TRAFO_SCDM: inconsistent compact transformation shape")
+     T = 0
+ 
+     ! Only node 1 should do the work, all the others just communicate
+@@ -3973,26 +4150,31 @@
+       ! Only perform minimal amount of work on other nodes
+       DO ISP = 1, W%WDES%ISPIN
+          ! Calculate real-spave wave function (to communicate to node 1)
+-         CALL GET_WAVE_FUNCTIONS(W, VKPT(:, ANCHOR_IDX), ISP, P, LATT_CUR, -1)
++         PROFILING_START('scdm_wave_reconstruction')
++         CALL GET_WAVE_FUNCTIONS(W,VKPT(:,ANCHOR_IDX),ISP,P,LATT_CUR,-1, &
++            EXCLUDE_BAND=ACTIVE_EXCLUDE_BAND)
++         PROFILING_STOP('scdm_wave_reconstruction')
++         PROFILING_START('scdm_remaining_amn')
+          DO K_IDX = 1, NKPTS
+             ! Skip the anchor point as it was already computed
+             IF (ANCHOR_IDX==K_IDX) CYCLE
+             ! Calculate real-spave wave function (to communicate to node 1)
+-            CALL GET_WAVE_FUNCTIONS(W,VKPT(:,K_IDX),ISP,P,LATT_CUR,-1,PSI,CELEN)
++            CALL GET_WAVE_FUNCTIONS(W,VKPT(:,K_IDX),ISP,P,LATT_CUR,-1, &
++               EXCLUDE_BAND=ACTIVE_EXCLUDE_BAND)
+          ENDDO
++         PROFILING_STOP('scdm_remaining_amn')
+       ENDDO
+       ! Get the matrix from node 1
+       CALLMPI(M_bcast_z_from(W%WDES%COMM, T, SIZE(T), 1))
+       RETURN
+     ENDIF
+ 
+-    NP = W%WDES%GRID%RL%NP
+-    ALLOCATE(PSI(NP*W%WDES%NRSPINORS,W%WDES%NB_TOT))
+-    ALLOCATE(PSI_D_SCDM(W%WDES%NB_TOT,NP*W%WDES%NRSPINORS))
+-    ALLOCATE(CELEN(W%WDES%NB_TOT))
+-    ALLOCATE(WVFN_PHASE(NP*W%WDES%NRSPINORS))
+-
+-    CALL RANK_REVEAL_QR%INIT(W%WDES%NB_TOT, NP * W%WDES%NRSPINORS, INFO)
++    ALLOCATE(PSI(NP*W%WDES%NRSPINORS,NB_SCDM))
++    ALLOCATE(PSI_D_SCDM(NB_SCDM,NP*W%WDES%NRSPINORS))
++    ALLOCATE(CELEN(NB_SCDM))
++    ALLOCATE(WVFN_PHASE(NP))
++
++    CALL RANK_REVEAL_QR%INIT(NB_SCDM, NP * W%WDES%NRSPINORS, INFO)
+     IF (INFO /= 0) CALL vtutor%error( &
+       "CALC_WANNIER_TRAFO_SCDM: xGEQP3 query returned with error code " // str(INFO))
+ 
+@@ -4003,17 +4185,20 @@
+        ! |________________________________|
+ 
+       ! Calculate real-space wave function
+-      CALL GET_WAVE_FUNCTIONS(W,VKPT(:,ANCHOR_IDX),ISP,P,LATT_CUR,-1,PSI,CELEN)
+-      DO IB=1,W%WDES%NB_TOT
++      PROFILING_START('scdm_wave_reconstruction')
++      CALL GET_WAVE_FUNCTIONS(W,VKPT(:,ANCHOR_IDX),ISP,P,LATT_CUR,-1,PSI,CELEN, &
++         ACTIVE_EXCLUDE_BAND)
++      DO IB=1,NB_SCDM
+          NORM = REAL(DOT_PRODUCT(PSI(:,IB), PSI(:,IB)),KIND=q)
+          PSI(:,IB) = PSI(:,IB) / SQRT(NORM)
+       ENDDO
+ 
+       CALL GET_WAVE_FUNCTIONS_PHASE(W,VKPT(:,ANCHOR_IDX),WVFN_PHASE)
++      PROFILING_STOP('scdm_wave_reconstruction')
+ 
+       ! Calculate SCDM matrix
+       CUTOFF_FACTOR = CUTOFF_DES_GET_CUTOFF(CUTOFF_DES,ISP,CELEN)
+-      DO IB=1,W%WDES%NB_TOT
++      DO IB=1,NB_SCDM
+          PSI_D_SCDM(IB,:NP) = GCONJG(PSI(:NP,IB))*WVFN_PHASE(:)*CUTOFF_FACTOR(IB)
+          IF (W%WDES%NRSPINORS==2) &
+             PSI_D_SCDM(IB,NP+1:) = GCONJG(PSI(NP+1:,IB))*WVFN_PHASE(:)*CUTOFF_FACTOR(IB)
+@@ -4021,7 +4206,9 @@
+ 
+        ! Use rank-revealing QR decomposition to find a localized representation
+        RANK_REVEAL_QR%PIVOT = 0
++       PROFILING_START('scdm_anchor_rrqr')
+        CALL RANK_REVEAL_QR%CALC(PSI_D_SCDM, INFO)
++       PROFILING_STOP('scdm_anchor_rrqr')
+        IF (INFO /= 0) CALL vtutor%error( &
+          "CALC_WANNIER_TRAFO_SCDM: xGEQP3 returned with error code " // str(INFO))
+ 
+@@ -4054,7 +4241,7 @@
+ 
+        ! Extract SCDM matrix at anchor point
+        CUTOFF_FACTOR = CUTOFF_DES_GET_CUTOFF(CUTOFF_DES,ISP,CELEN)
+-       DO IB=1,W%WDES%NB_TOT
++       DO IB=1,NB_SCDM
+           DO IW=1,NUM_WANN
+              J=RANK_REVEAL_QR%PIVOT(IW); IF ( J > NP) J = J-NP
+              T(IB,IW,ANCHOR_IDX,ISP) = GCONJG(PSI(RANK_REVEAL_QR%PIVOT(IW),IB))*WVFN_PHASE(J)*CUTOFF_FACTOR(IB)
+@@ -4065,14 +4252,16 @@
+        ! |                                  |
+        ! |   Loop over remaining k-points   |
+        ! |__________________________________|
++       PROFILING_START('scdm_remaining_amn')
+        DO K_IDX = 1, NKPTS
+ 
+           ! Skip the anchor point as it was already computed
+           IF (ANCHOR_IDX==K_IDX) CYCLE
+ 
+           ! Calculate real-space wave function
+-          CALL GET_WAVE_FUNCTIONS(W,VKPT(:,K_IDX),ISP,P,LATT_CUR,-1,PSI,CELEN)
+-          DO IB=1,W%WDES%NB_TOT
++          CALL GET_WAVE_FUNCTIONS(W,VKPT(:,K_IDX),ISP,P,LATT_CUR,-1,PSI,CELEN, &
++             ACTIVE_EXCLUDE_BAND)
++          DO IB=1,NB_SCDM
+              NORM = REAL(DOT_PRODUCT(PSI(:,IB), PSI(:,IB)),KIND=q)
+              PSI(:,IB) = PSI(:,IB) / SQRT(NORM)
+           ENDDO
+@@ -4081,13 +4270,14 @@
+ 
+           ! Calculate SCDM matrix at current k-point
+           CUTOFF_FACTOR = CUTOFF_DES_GET_CUTOFF(CUTOFF_DES,ISP,CELEN)
+-          DO IB=1,W%WDES%NB_TOT
++          DO IB=1,NB_SCDM
+              DO IW=1,NUM_WANN
+                 J=RANK_REVEAL_QR%PIVOT(IW); IF ( J > NP) J = J-NP
+                 T(IB,IW,K_IDX,ISP) = GCONJG(PSI(RANK_REVEAL_QR%PIVOT(IW),IB))*WVFN_PHASE(J)*CUTOFF_FACTOR(IB)
+              ENDDO
+           ENDDO
+        ENDDO
++       PROFILING_STOP('scdm_remaining_amn')
+     ENDDO
+ 
+     ! Broadcast the matrix from node 1 to all others
+@@ -4096,6 +4286,7 @@
+ 
+  !> @brief Get cutoff function for a set of energy states
+  FUNCTION CUTOFF_DES_GET_CUTOFF(CUTOFF_DES,ISP,CELEN) RESULT(CUTOFF_FACTOR)
++    USE tutor, ONLY : vtutor
+     TYPE(cutoff_type),INTENT(IN) :: CUTOFF_DES
+     INTEGER,INTENT(IN) :: ISP
+     COMPLEX(q),INTENT(IN) :: CELEN(:)
+@@ -4111,6 +4302,8 @@
+         CASE(CUTOFF_FERMI)
+            CUTOFF_FACTOR = 1.0_q/(EXP((REAL(CELEN,q)-CUTOFF_DES%MU(ISP)))+1.0_q)
+         CASE(CUTOFF_NUM_WANN)
++           IF (CUTOFF_DES%NUM_WANN < 1 .OR. CUTOFF_DES%NUM_WANN > SIZE(CELEN)) CALL vtutor%error( &
++              "CUTOFF_DES_GET_CUTOFF: NUM_WANN is outside the provided band dimension")
+            MU = REAL(CELEN(CUTOFF_DES%NUM_WANN),q)
+            CUTOFF_FACTOR = .5_q * ERFC((REAL(CELEN,q) - MU) / CUTOFF_DES%SIGMA(ISP))
+         CASE DEFAULT
+diff --git a/src/fock_glb.F b/src/fock_glb.F
+--- a/src/fock_glb.F
++++ b/src/fock_glb.F
+@@ -62,6 +62,22 @@
+ 
+   !> cutoff for HF kernel applicable to 0 and 3 dimensional systems (molecules)
+   REAL(q),SAVE :: HFRCUT=0
++
++  ! Private opt-in Wannier interaction mode. HFRCUT remains a radius internally.
++  INTEGER, PARAMETER :: WINT_CUTOFF_NATIVE=0, WINT_CUTOFF_WS=1
++  INTEGER, SAVE :: WINT_CUTOFF_MODE=WINT_CUTOFF_NATIVE
++  ! Frozen-orbital physical interaction, independent of cutoff geometry.
++  INTEGER, PARAMETER :: WINT_MODEL_BARE=0, WINT_MODEL_YUKAWA=1, WINT_MODEL_RK_SHEET=2, &
++     WINT_MODEL_RK2D=3, WINT_MODEL_DUAL_GATE=4
++  INTEGER, PARAMETER :: WINT_BOUNDARY_BVK=0, WINT_BOUNDARY_SLAB=1
++  INTEGER, SAVE :: WINT_BOUNDARY=WINT_BOUNDARY_BVK
++  INTEGER, SAVE :: WINT_MODEL=WINT_MODEL_BARE
++  LOGICAL, SAVE :: WINT_ENABLED=.FALSE.
++  REAL(q), SAVE :: WINT_KAPPA=0._q, WINT_EPS=1._q
++  REAL(q), SAVE :: WINT_R0=0._q, WINT_GATE_D=0._q, WINT_Z0=0._q
++  REAL(q), SAVE :: WINT_NORMAL(3)=0._q, WINT_NORMAL_USED(3)=0._q, WINT_LAYER_LZ=0._q
++  REAL(q), SAVE :: WS_TOL=1.0e-8_q
++  INTEGER, SAVE :: WS_NGRID(3)=0
+ 
+   !> smoothed cutoff function applied in correlated calculations
+   REAL(q),SAVE :: HFRCUT_SMOOTH=1._q/200._q
+diff --git a/src/fock.F b/src/fock.F
+--- a/src/fock.F
++++ b/src/fock.F
+@@ -65,6 +65,7 @@
+       USE tutor, ONLY: vtutor, isError, isAlert, isWarning, isAdvice, LHFOneCenter, ISYM2, &
+           NMAXFOCKAE, DeprENCUTFOCK, PRECFOCK, vdWKlimes, HFParam, OEPdouble, LIBXCWrongName
+       USE xc_family_name
++      USE chi_glb, ONLY: L2E4W_ALL, LCRPA
+ #ifdef USELIBXC
+       USE xc_f03_lib_m
+ #endif
+@@ -85,7 +86,7 @@
+       LOGICAL :: LVTOT, LASPH, LNONCOLLINEAR
+       REAL(q) :: SAXIS(3)
+   ! local
+-      INTEGER IDUM, N, IERR
++      INTEGER IDUM, N, IERR, WS_INPUT_COUNT
+       REAL(q) RDUM
+       COMPLEX(q) CDUM
+       LOGICAL LOPEN,LDUM
+@@ -106,6 +107,13 @@
+       HFSCREEN=0.0_q
+       HFSCREENC=0.0_q
+       HFRCUT=0.0_q
++      WINT_CUTOFF_MODE=WINT_CUTOFF_NATIVE
++      WINT_MODEL=WINT_MODEL_BARE
++      WINT_ENABLED=.FALSE.
++      WINT_KAPPA=0._q
++      WINT_EPS=1._q
++      WS_TOL=1.0e-8_q
++      WS_NGRID=0
+       
+       LRSCOR=.FALSE.
+       LHFCALC=CALCULATE_RESPONSE_FUNCTIONS().OR.LDMATRIX()
+@@ -115,6 +123,8 @@
+       FOCKCORR=1
+ 
+       CALL OPEN_INCAR_IF_FOUND(IU5, LOPEN)
++      ! Read and validate reserved model tags before the ordinary-PBE branch.
++      CALL WINT_READ_KERNEL_INPUT(LOPEN,IU0,IU5)
+ ! HF calculations
+       CALL PROCESS_INCAR(LOPEN, IU0, IU5, 'LHFCALC', LHFCALC, IERR, WRITEXMLINCAR, FOUNDNUMBER=N)
+       IF (LHFCALC .AND. IERR==0 .AND. N>=1) THEN
+@@ -577,6 +587,14 @@
+ 
+       CALL PROCESS_INCAR(LOPEN, IU0, IU5, 'EVENONLY', EVENONLY, IERR, WRITEXMLINCAR)
+ 
++      ! Reserved WS input must never silently disappear in an ordinary PBE run.
++      IF (.NOT.LHFCALC) THEN
++         RDUM=0._q
++         CALL PROCESS_INCAR(LOPEN,IU0,IU5,'HFRCUT',RDUM,IERR,WRITEXMLINCAR)
++         IF (RDUM==-2._q.OR.COUNT_ELEMENTS(incar_f,'WS_TOL')>0.OR.COUNT_ELEMENTS(incar_f,'WS_NGRID')>0) &
++            CALL vtutor%error('HFRCUT=-2/WS controls are supported only for native bare ALGO=2E4WA')
++      ENDIF
++
+       IF (LHFCALC) THEN
+ !
+ ! read lowest band to be included in HF term
+@@ -690,6 +708,29 @@
+ ! truncate the potential kernel at a finite radius R
+ !
+          CALL PROCESS_INCAR(LOPEN, IU0, IU5, 'HFRCUT', HFRCUT, IERR, WRITEXMLINCAR)
++         IF (IERR/=0.AND.IERR/=not_found_error) CALL vtutor%error('Invalid HFRCUT input')
++         WS_INPUT_COUNT=0
++         CALL PROCESS_INCAR(LOPEN, IU0, IU5, 'WS_TOL', WS_TOL, IERR, WRITEXMLINCAR, FOUNDNUMBER=N)
++         IF (IERR/=0.AND.IERR/=not_found_error) CALL vtutor%error('Invalid WS_TOL input')
++         IF (N/=0.AND.N/=1) CALL vtutor%error('WS_TOL requires one real value')
++         WS_INPUT_COUNT=WS_INPUT_COUNT+N
++         CALL PROCESS_INCAR(LOPEN, IU0, IU5, 'WS_NGRID', WS_NGRID, 3, IERR, WRITEXMLINCAR, FOUNDNUMBER=N)
++         IF (IERR/=0.AND.IERR/=not_found_error) CALL vtutor%error('Invalid WS_NGRID input')
++         IF (N/=0.AND.N/=3) CALL vtutor%error('WS_NGRID requires three integer dimensions')
++         WS_INPUT_COUNT=WS_INPUT_COUNT+N
++         IF (HFRCUT==-2._q) THEN
++            IF (.NOT.L2E4W_ALL.OR.LCRPA) &
++               CALL vtutor%error('HFRCUT=-2 WS is supported only for native bare ALGO=2E4WA')
++            IF (HFSCREEN/=0._q.OR.L_THOMAS_FERMI.OR.LRHFCALC.OR.L_MODEL_HF.OR.EXXOEP/=0) &
++               CALL vtutor%error('WS Wannier integrals require bare Coulomb without screened/exchange model options')
++            IF (.NOT.(WS_TOL>=1.0e-14_q.AND.WS_TOL<0.1_q).OR.ANY(WS_NGRID<0)) &
++               CALL vtutor%error('WS requires 1e-14 <= WS_TOL < 0.1 and nonnegative WS_NGRID')
++            WINT_CUTOFF_MODE=WINT_CUTOFF_WS
++            ! Never allow the mode sentinel to enter legacy radius formulas.
++            HFRCUT=0._q
++         ELSEIF (WS_INPUT_COUNT>0) THEN
++            CALL vtutor%error('WS_TOL/WS_NGRID require HFRCUT=-2')
++         ENDIF
+ !
+ ! read in AEXX amount of exact exchange and AGGAX and/or MGGAX (default 1-AEXX)
+ !
+@@ -911,6 +952,187 @@
+ GPOMP !$OMP TARGET UPDATE TO(CMBJ_TYP,LMETA_SC_CMBJ)
+ 
+     END SUBROUTINE XC_FOCK_READER
++
++    ! All WINT tags are opt-in, even BARE. Parse them before LHFCALC dispatch
++    ! so an invalid/unsupported ordinary PBE input cannot silently disappear.
++    SUBROUTINE WINT_READ_KERNEL_INPUT(LOPEN,IU0,IU5)
++      USE reader_tags
++      USE chi_glb, ONLY: L2E4W_ALL,LCRPA
++      USE string, ONLY: uppercase
++      USE, INTRINSIC :: ieee_arithmetic, ONLY: ieee_is_finite
++      USE tutor, ONLY: vtutor
++      IMPLICIT NONE
++      LOGICAL, INTENT(IN) :: LOPEN
++      INTEGER, INTENT(IN) :: IU0,IU5
++      LOGICAL :: HAS_KERNEL,HAS_KAPPA,HAS_EPS,HAS_BOUNDARY,HAS_R0,HAS_GATE,HAS_Z0,HAS_NORMAL
++      INTEGER :: IERR,N
++      REAL(q) :: REQUESTED_CUTOFF,NSCALE
++      CHARACTER(64) :: NAME,BOUNDARY_NAME
++      CHARACTER(:), ALLOCATABLE :: PARSE_ERRORS
++
++      ! Native reader errors retain empty assignments even after duplicates.
++      IF (ALLOCATED(incar_f%error)) THEN
++         PARSE_ERRORS=UPPERCASE(incar_f%error)
++         IF (INDEX(PARSE_ERRORS,'TAG WINT_KERNEL IS NOT ASSIGNED.')>0) &
++            CALL vtutor%error('WINT_KERNEL requires one supported model name')
++         IF (INDEX(PARSE_ERRORS,'TAG WINT_BOUNDARY IS NOT ASSIGNED.')>0) &
++            CALL vtutor%error('WINT_BOUNDARY requires one name: BVK_WS or SLAB_WS')
++         IF (INDEX(PARSE_ERRORS,'TAG WINT_KAPPA IS NOT ASSIGNED.')>0) &
++            CALL vtutor%error('WINT_KAPPA requires one finite nonnegative value in Angstrom^-1')
++         IF (INDEX(PARSE_ERRORS,'TAG WINT_EPS IS NOT ASSIGNED.')>0) &
++            CALL vtutor%error('WINT_EPS requires one finite positive relative permittivity')
++         IF (INDEX(PARSE_ERRORS,'TAG WINT_R0 IS NOT ASSIGNED.')>0) &
++            CALL vtutor%error('WINT_R0 requires one finite nonnegative length in Angstrom')
++         IF (INDEX(PARSE_ERRORS,'TAG WINT_GATE_D IS NOT ASSIGNED.')>0) &
++            CALL vtutor%error('WINT_GATE_D requires one finite positive length in Angstrom')
++         IF (INDEX(PARSE_ERRORS,'TAG WINT_Z0 IS NOT ASSIGNED.')>0) &
++            CALL vtutor%error('WINT_Z0 requires one finite coordinate in Angstrom')
++         IF (INDEX(PARSE_ERRORS,'TAG WINT_NORMAL IS NOT ASSIGNED.')>0) &
++            CALL vtutor%error('WINT_NORMAL requires three finite Cartesian components')
++      ENDIF
++      HAS_KERNEL=WINT_TAG_PRESENT('WINT_KERNEL')
++      HAS_KAPPA=WINT_TAG_PRESENT('WINT_KAPPA')
++      HAS_EPS=WINT_TAG_PRESENT('WINT_EPS')
++      HAS_BOUNDARY=WINT_TAG_PRESENT('WINT_BOUNDARY')
++      HAS_R0=WINT_TAG_PRESENT('WINT_R0')
++      HAS_GATE=WINT_TAG_PRESENT('WINT_GATE_D')
++      HAS_Z0=WINT_TAG_PRESENT('WINT_Z0')
++      HAS_NORMAL=WINT_TAG_PRESENT('WINT_NORMAL')
++      IF (.NOT.(HAS_KERNEL.OR.HAS_KAPPA.OR.HAS_EPS.OR.HAS_BOUNDARY.OR.HAS_R0.OR.HAS_GATE.OR.HAS_Z0.OR.HAS_NORMAL)) RETURN
++      WINT_ENABLED=.TRUE.
++      IF (.NOT.HAS_KERNEL.AND.(HAS_BOUNDARY.OR.HAS_R0.OR.HAS_GATE.OR.HAS_Z0.OR.HAS_NORMAL)) &
++         CALL vtutor%error('Layered interaction parameters require explicit WINT_KERNEL')
++      NAME='BARE'
++      IF (HAS_KERNEL) THEN
++         CALL PROCESS_INCAR(LOPEN,IU0,IU5,'WINT_KERNEL',NAME,64,IERR,WRITEXMLINCAR, &
++                            LCONTINUE=.TRUE.,FOUNDNUMBER=N)
++         IF (IERR/=0.OR.N/=1) CALL vtutor%error('WINT_KERNEL requires one supported model name')
++      ENDIF
++      NAME=UPPERCASE(TRIM(ADJUSTL(NAME)))
++      SELECT CASE(TRIM(NAME))
++      CASE('BARE')
++         WINT_MODEL=WINT_MODEL_BARE
++      CASE('YUKAWA')
++         WINT_MODEL=WINT_MODEL_YUKAWA
++      CASE('RK_SHEET')
++         WINT_MODEL=WINT_MODEL_RK_SHEET
++      CASE('RK2D')
++         WINT_MODEL=WINT_MODEL_RK2D
++      CASE('DUAL_GATE')
++         WINT_MODEL=WINT_MODEL_DUAL_GATE
++      CASE DEFAULT
++         CALL vtutor%error('Unknown WINT_KERNEL: '//TRIM(NAME)//'; supported: BARE, YUKAWA, RK_SHEET, RK2D, DUAL_GATE')
++      END SELECT
++      BOUNDARY_NAME='BVK_WS'
++      IF (HAS_BOUNDARY) THEN
++         CALL PROCESS_INCAR(LOPEN,IU0,IU5,'WINT_BOUNDARY',BOUNDARY_NAME,64,IERR,WRITEXMLINCAR, &
++                            LCONTINUE=.TRUE.,FOUNDNUMBER=N)
++         IF (IERR/=0.OR.N/=1) CALL vtutor%error('WINT_BOUNDARY requires one name: BVK_WS or SLAB_WS')
++      ENDIF
++      BOUNDARY_NAME=UPPERCASE(TRIM(ADJUSTL(BOUNDARY_NAME)))
++      SELECT CASE(TRIM(BOUNDARY_NAME))
++      CASE('BVK_WS')
++         WINT_BOUNDARY=WINT_BOUNDARY_BVK
++      CASE('SLAB_WS')
++         WINT_BOUNDARY=WINT_BOUNDARY_SLAB
++      CASE DEFAULT
++         CALL vtutor%error('Unknown WINT_BOUNDARY: '//TRIM(BOUNDARY_NAME)//'; supported: BVK_WS, SLAB_WS')
++      END SELECT
++      IF (HAS_KAPPA) THEN
++         CALL PROCESS_INCAR(LOPEN,IU0,IU5,'WINT_KAPPA',WINT_KAPPA,IERR,WRITEXMLINCAR, &
++                            LCONTINUE=.TRUE.,FOUNDNUMBER=N)
++         IF (IERR/=0.OR.N/=1) CALL vtutor%error('WINT_KAPPA requires one finite nonnegative value in Angstrom^-1')
++         IF (.NOT.IEEE_IS_FINITE(WINT_KAPPA).OR.WINT_KAPPA<0._q) &
++            CALL vtutor%error('WINT_KAPPA must be finite and >= 0 Angstrom^-1')
++      ENDIF
++      IF (HAS_EPS) THEN
++         CALL PROCESS_INCAR(LOPEN,IU0,IU5,'WINT_EPS',WINT_EPS,IERR,WRITEXMLINCAR, &
++                            LCONTINUE=.TRUE.,FOUNDNUMBER=N)
++         IF (IERR/=0.OR.N/=1) CALL vtutor%error('WINT_EPS requires one finite positive relative permittivity')
++         IF (.NOT.IEEE_IS_FINITE(WINT_EPS).OR.WINT_EPS<=0._q) &
++            CALL vtutor%error('WINT_EPS must be finite and > 0 (dimensionless)')
++      ENDIF
++      IF (HAS_R0) THEN
++         CALL PROCESS_INCAR(LOPEN,IU0,IU5,'WINT_R0',WINT_R0,IERR,WRITEXMLINCAR, &
++                            LCONTINUE=.TRUE.,FOUNDNUMBER=N)
++         IF (IERR/=0.OR.N/=1) CALL vtutor%error('WINT_R0 requires one finite nonnegative length in Angstrom')
++         IF (.NOT.IEEE_IS_FINITE(WINT_R0).OR.WINT_R0<0._q) &
++            CALL vtutor%error('WINT_R0 must be finite and >= 0 Angstrom')
++      ENDIF
++      IF (HAS_GATE) THEN
++         CALL PROCESS_INCAR(LOPEN,IU0,IU5,'WINT_GATE_D',WINT_GATE_D,IERR,WRITEXMLINCAR, &
++                            LCONTINUE=.TRUE.,FOUNDNUMBER=N)
++         IF (IERR/=0.OR.N/=1) CALL vtutor%error('WINT_GATE_D requires one finite positive length in Angstrom')
++         IF (.NOT.IEEE_IS_FINITE(WINT_GATE_D).OR.WINT_GATE_D<=0._q) &
++            CALL vtutor%error('WINT_GATE_D must be finite and > 0 Angstrom')
++      ENDIF
++      IF (HAS_Z0) THEN
++         CALL PROCESS_INCAR(LOPEN,IU0,IU5,'WINT_Z0',WINT_Z0,IERR,WRITEXMLINCAR, &
++                            LCONTINUE=.TRUE.,FOUNDNUMBER=N)
++         IF (IERR/=0.OR.N/=1) CALL vtutor%error('WINT_Z0 requires one finite coordinate in Angstrom')
++         IF (.NOT.IEEE_IS_FINITE(WINT_Z0)) CALL vtutor%error('WINT_Z0 must be a finite coordinate in Angstrom')
++      ENDIF
++      IF (HAS_NORMAL) THEN
++         CALL PROCESS_INCAR(LOPEN,IU0,IU5,'WINT_NORMAL',WINT_NORMAL,3,IERR,WRITEXMLINCAR, &
++                            LCONTINUE=.TRUE.,FOUNDNUMBER=N)
++         IF (IERR/=0.OR.N/=3) CALL vtutor%error('WINT_NORMAL requires three finite Cartesian components')
++         IF (.NOT.ALL(IEEE_IS_FINITE(WINT_NORMAL))) &
++            CALL vtutor%error('WINT_NORMAL must be finite and nonzero')
++         NSCALE=MAXVAL(ABS(WINT_NORMAL))
++         IF (NSCALE==0._q) CALL vtutor%error('WINT_NORMAL must be finite and nonzero')
++         WINT_NORMAL=WINT_NORMAL/NSCALE
++         WINT_NORMAL=WINT_NORMAL/SQRT(SUM(WINT_NORMAL**2))
++      ENDIF
++      IF (WINT_MODEL==WINT_MODEL_BARE.AND.(HAS_KAPPA.OR.HAS_EPS)) &
++         CALL vtutor%error('WINT_KERNEL=BARE does not accept WINT_KAPPA or WINT_EPS')
++      IF (HAS_KAPPA.AND.WINT_MODEL/=WINT_MODEL_YUKAWA) &
++         CALL vtutor%error('WINT_KAPPA is only valid for WINT_KERNEL=YUKAWA')
++      IF (WINT_MODEL==WINT_MODEL_YUKAWA.AND..NOT.HAS_KAPPA) &
++         CALL vtutor%error('WINT_KERNEL=YUKAWA requires explicit WINT_KAPPA in Angstrom^-1')
++      IF (HAS_R0.AND.WINT_MODEL/=WINT_MODEL_RK_SHEET.AND.WINT_MODEL/=WINT_MODEL_RK2D) &
++         CALL vtutor%error('WINT_R0 is only valid for RK_SHEET or RK2D')
++      IF ((WINT_MODEL==WINT_MODEL_RK_SHEET.OR.WINT_MODEL==WINT_MODEL_RK2D).AND..NOT.HAS_R0) &
++         CALL vtutor%error('WINT_KERNEL='//TRIM(NAME)//' requires explicit WINT_R0 in Angstrom')
++      IF (HAS_GATE.AND.WINT_MODEL/=WINT_MODEL_DUAL_GATE) &
++         CALL vtutor%error('WINT_GATE_D is only valid for WINT_KERNEL=DUAL_GATE')
++      IF (WINT_MODEL==WINT_MODEL_DUAL_GATE.AND..NOT.HAS_GATE) &
++         CALL vtutor%error('WINT_KERNEL=DUAL_GATE requires explicit WINT_GATE_D in Angstrom')
++      IF (WINT_MODEL>=WINT_MODEL_RK_SHEET.AND.WINT_BOUNDARY/=WINT_BOUNDARY_SLAB) &
++         CALL vtutor%error('WINT_KERNEL='//TRIM(NAME)//' requires WINT_BOUNDARY=SLAB_WS')
++      IF (WINT_BOUNDARY/=WINT_BOUNDARY_SLAB) THEN
++         IF (HAS_NORMAL) CALL vtutor%error('WINT_NORMAL requires WINT_BOUNDARY=SLAB_WS')
++         IF (HAS_Z0) CALL vtutor%error('WINT_Z0 requires WINT_BOUNDARY=SLAB_WS')
++      ELSE
++         IF (WINT_MODEL==WINT_MODEL_RK2D) THEN
++            IF (HAS_Z0) CALL vtutor%error('RK2D does not accept WINT_Z0; the normal density is integrated')
++         ELSE
++            IF (.NOT.HAS_Z0) CALL vtutor%error('Finite-height SLAB_WS requires explicit WINT_Z0 in Angstrom')
++         ENDIF
++      ENDIF
++      IF (.NOT.L2E4W_ALL.OR.LCRPA) &
++         CALL vtutor%error('WINT_KERNEL parameters require native ALGO=2E4WA without cRPA')
++      REQUESTED_CUTOFF=0._q
++      CALL PROCESS_INCAR(LOPEN,IU0,IU5,'HFRCUT',REQUESTED_CUTOFF,IERR,WRITEXMLINCAR, &
++                         LCONTINUE=.TRUE.,FOUNDNUMBER=N)
++      IF (IERR/=0.OR.N/=1.OR.REQUESTED_CUTOFF/=-2._q) &
++         CALL vtutor%error('WINT_KERNEL parameters require HFRCUT=-2 (Wigner-Seitz cutoff)')
++    END SUBROUTINE WINT_READ_KERNEL_INPUT
++
++    LOGICAL FUNCTION WINT_TAG_PRESENT(KEY)
++      USE reader_tags, ONLY: incar_f,COUNT_ELEMENTS
++      USE string, ONLY: uppercase
++      IMPLICIT NONE
++      CHARACTER(*), INTENT(IN) :: KEY
++      INTEGER :: I
++      ! Retained zero-element tags are recognized by their native text keys.
++      ! Dropped empty assignments are rejected above from the reader error channel.
++      WINT_TAG_PRESENT=COUNT_ELEMENTS(incar_f,KEY)>0
++      IF (ALLOCATED(incar_f%tags)) THEN
++         DO I=1,SIZE(incar_f%tags)
++            IF (UPPERCASE(incar_f%tags(I)%key)==KEY) WINT_TAG_PRESENT=.TRUE.
++         ENDDO
++      ENDIF
++    END FUNCTION WINT_TAG_PRESENT
+ 
+ 
+ !**********************************************************************
+@@ -1994,6 +2216,238 @@
+ ! 
+ !**********************************************************************
+ 
++
++! Original private WS Wannier-integral entry; legacy Fock kernels are unchanged.
++    SUBROUTINE WS_PREPARE_KERNEL(LATT_CUR, IU6)
++      USE constant, ONLY: PI, EDEPS
++      USE lattice, ONLY: latt
++      USE full_kpoints, ONLY: KPOINTS_FULL, CHECK_FULL_KPOINTS
++      USE ws_coulomb, ONLY: ws_init, ws_get, ws_info, ws_init_pair, ws_get_screened
++      USE wint_layered, ONLY: wlayer_init,wlayer_info
++      USE iso_fortran_env, ONLY: int64
++      USE tutor, ONLY: vtutor
++      IMPLICIT NONE
++      TYPE(latt), INTENT(IN) :: LATT_CUR
++      INTEGER, INTENT(IN) :: IU6
++      INTEGER :: NK(3), I, IERR, NG(3), NG2(2), NTLOW, NTHIGH, MAXMODE
++      INTEGER(int64) :: BYTES
++      REAL(q) :: A(3,3), ALPHA, RIN, VOLUME, HEAD, LZ, QUADERR
++      CHARACTER(512) :: MSG
++      LOGICAL, SAVE :: REPORTED=.FALSE., REPORTED_ENABLED=.FALSE.
++      REAL(q), SAVE :: REPORTED_A(3,3)=0, REPORTED_TOL=0
++      INTEGER, SAVE :: REPORTED_GRID(3)=0, REPORTED_MODEL=-1
++      REAL(q), SAVE :: REPORTED_KAPPA=-1, REPORTED_EPS=-1
++      INTEGER, SAVE :: REPORTED_BOUNDARY=-1
++      REAL(q), SAVE :: REPORTED_R0=-1, REPORTED_GATE=-1, REPORTED_Z0=HUGE(1._q), REPORTED_NORMAL(3)=0._q
++
++      IF (WINT_CUTOFF_MODE/=WINT_CUTOFF_WS) &
++         CALL vtutor%error('WS kernel requested without HFRCUT=-2')
++      CALL CHECK_FULL_KPOINTS
++      NK=[KPOINTS_FULL%NKPX,KPOINTS_FULL%NKPY,KPOINTS_FULL%NKPZ]
++      IF (ANY(NK<1)) CALL vtutor%error('WS requires a regular automatic Gamma-centered k mesh')
++      IF (KPOINTS_FULL%NKPTS_NON_ZERO/=PRODUCT(NK)) &
++         CALL vtutor%error('WS requires a complete uniform three-dimensional mesh descriptor')
++      IF (NKREDX/=1.OR.NKREDY/=1.OR.NKREDZ/=1.OR.HFKIDENT.OR.SHIFTRED.OR.ODDONLY.OR.EVENONLY) &
++         CALL vtutor%error('WS Wannier integrals do not support Fock mesh reduction or shifted/odd/even grids')
++      IF (HFSCREEN/=0._q.OR.MODEL_GW/=0.OR.L_THOMAS_FERMI.OR.LRHFCALC.OR.L_MODEL_HF) &
++         CALL vtutor%error('WS Wannier integrals require the bare integral kernel')
++      IF (ABS(AEXX-1._q)>1.0e-12_q) CALL vtutor%error('WS Wannier integrals require full Coulomb strength AEXX=1')
++      DO I=1,3
++         A(:,I)=LATT_CUR%A(:,I)*REAL(NK(I),q)
++      ENDDO
++      IF (WINT_BOUNDARY==WINT_BOUNDARY_SLAB) THEN
++         CALL wlayer_init(LATT_CUR%A,NK,WINT_MODEL,WINT_KAPPA,WINT_EPS,WINT_R0,WINT_GATE_D, &
++                          WINT_Z0,WINT_NORMAL,WS_TOL,WS_NGRID,IERR,MSG)
++         IF (IERR/=0) CALL vtutor%error('Layered interaction construction failed: '//TRIM(MSG))
++         CALL wlayer_info(NG2,RIN,ALPHA,LZ,BYTES,NTLOW,NTHIGH,MAXMODE,QUADERR)
++         WINT_LAYER_LZ=LZ
++         IF (MAXVAL(ABS(WINT_NORMAL))==0._q) THEN
++            WINT_NORMAL_USED=LATT_CUR%A(:,3)/SQRT(SUM(LATT_CUR%A(:,3)**2))
++         ELSE
++            WINT_NORMAL_USED=WINT_NORMAL
++         ENDIF
++         IF (IU6>=0) THEN
++            IF (.NOT.REPORTED.OR.ANY(A/=REPORTED_A).OR.WS_TOL/=REPORTED_TOL.OR.ANY(WS_NGRID/=REPORTED_GRID).OR. &
++                WINT_MODEL/=REPORTED_MODEL.OR.WINT_KAPPA/=REPORTED_KAPPA.OR.WINT_EPS/=REPORTED_EPS.OR. &
++                WINT_BOUNDARY/=REPORTED_BOUNDARY.OR.WINT_R0/=REPORTED_R0.OR.WINT_GATE_D/=REPORTED_GATE.OR. &
++                WINT_Z0/=REPORTED_Z0.OR.ANY(WINT_NORMAL/=REPORTED_NORMAL)) THEN
++               WRITE(IU6,'(A)') ' WANNIER_INTERACTION_WS: HFRCUT=-2, in-plane BvK WS and open normal cell'
++               WRITE(IU6,'(A)') ' WINT_BOUNDARY: SLAB_WS'
++               SELECT CASE(WINT_MODEL)
++               CASE(WINT_MODEL_BARE)
++                  WRITE(IU6,'(A)') ' WINT_KERNEL: BARE'
++               CASE(WINT_MODEL_YUKAWA)
++                  WRITE(IU6,'(A)') ' WINT_KERNEL: YUKAWA'
++                  WRITE(IU6,'(A,ES16.8)') ' WINT_KAPPA [1/Angstrom]: ',WINT_KAPPA
++               CASE(WINT_MODEL_RK_SHEET)
++                  WRITE(IU6,'(A)') ' WINT_KERNEL: RK_SHEET'
++               CASE(WINT_MODEL_RK2D)
++                  WRITE(IU6,'(A)') ' WINT_KERNEL: RK2D'
++               CASE(WINT_MODEL_DUAL_GATE)
++                  WRITE(IU6,'(A)') ' WINT_KERNEL: DUAL_GATE'
++                  WRITE(IU6,'(A,ES16.8)') ' WINT_GATE_D [Angstrom, midplane to each plate]: ',WINT_GATE_D
++               END SELECT
++               IF (WINT_MODEL==WINT_MODEL_RK_SHEET.OR.WINT_MODEL==WINT_MODEL_RK2D) &
++                  WRITE(IU6,'(A,ES16.8)') ' WINT_R0 [Angstrom]: ',WINT_R0
++               IF (WINT_MODEL/=WINT_MODEL_BARE) &
++                  WRITE(IU6,'(A,ES16.8)') ' WINT_EPS [dimensionless relative permittivity]: ',WINT_EPS
++               IF (WINT_MODEL/=WINT_MODEL_RK2D) &
++                  WRITE(IU6,'(A,ES16.8)') ' WINT_Z0 [Angstrom along the declared normal]: ',WINT_Z0
++               WRITE(IU6,'(A,3F18.10)') ' WINT_NORMAL [Cartesian unit vector]: ',WINT_NORMAL_USED
++               WRITE(IU6,'(A,ES16.8)') ' WINT normal cell length [Angstrom]: ',LZ
++               WRITE(IU6,'(A,3I8)') ' WS mesh: ',NK
++               WRITE(IU6,'(A,2I8)') ' WS in-plane FFT grid: ',NG2
++               WRITE(IU6,'(A,ES16.8)') ' WS in-plane inradius [Angstrom]: ',RIN
++               WRITE(IU6,'(A,ES16.8)') ' WS plane Gaussian split [1/Angstrom]: ',ALPHA
++               WRITE(IU6,'(A,I18)') ' WINT layered owned workspace peak [bytes/rank]: ',BYTES
++               WRITE(IU6,'(A,2I8)') ' WINT heat-kernel quadrature counts [low/high]: ',NTLOW,NTHIGH
++               WRITE(IU6,'(A)') ' Evaluation: full PAW density; normal Fourier-Galerkin operator'
++               WRITE(IU6,'(A)') ' WS_NGRID(1:2): in-plane kernel Fourier-grid refinement'
++               WRITE(IU6,'(A)') ' Full PAW density: converge VCUTOFF and NGX/NGY/NGZ independently'
++               REPORTED=.TRUE.;REPORTED_A=A;REPORTED_TOL=WS_TOL;REPORTED_GRID=WS_NGRID
++               REPORTED_MODEL=WINT_MODEL;REPORTED_KAPPA=WINT_KAPPA;REPORTED_EPS=WINT_EPS
++               REPORTED_ENABLED=WINT_ENABLED;REPORTED_BOUNDARY=WINT_BOUNDARY
++               REPORTED_R0=WINT_R0;REPORTED_GATE=WINT_GATE_D;REPORTED_Z0=WINT_Z0;REPORTED_NORMAL=WINT_NORMAL
++            ENDIF
++         ENDIF
++         RETURN
++      ENDIF
++      IF (WINT_MODEL==WINT_MODEL_YUKAWA) THEN
++         CALL ws_init_pair(A,WS_TOL,WS_NGRID,WINT_KAPPA,WINT_EPS,IERR,MSG)
++      ELSE
++         CALL ws_init(A,WS_TOL,WS_NGRID,IERR,MSG)
++      ENDIF
++      IF (IERR/=0) CALL vtutor%error('WS construction failed: '//TRIM(MSG))
++      CALL ws_info(NG,ALPHA,RIN,VOLUME,BYTES)
++      IF (.NOT.REPORTED.OR.ANY(A/=REPORTED_A).OR.WS_TOL/=REPORTED_TOL.OR.ANY(WS_NGRID/=REPORTED_GRID).OR. &
++          WINT_MODEL/=REPORTED_MODEL.OR.WINT_KAPPA/=REPORTED_KAPPA.OR.WINT_EPS/=REPORTED_EPS.OR. &
++          (WINT_ENABLED.NEQV.REPORTED_ENABLED)) THEN
++         IF (IU6>=0) THEN
++            CALL ws_get([0._q,0._q,0._q],HEAD,IERR)
++            IF (IERR/=0) CALL vtutor%error('WS head evaluation failed')
++            IF (WINT_ENABLED) THEN
++               WRITE(IU6,'(A)') ' WANNIER_INTERACTION_WS: HFRCUT=-2, full real-space BvK WS'
++               IF (WINT_MODEL==WINT_MODEL_YUKAWA) THEN
++                  CALL ws_get_screened([0._q,0._q,0._q],HEAD,IERR)
++                  IF (IERR/=0) CALL vtutor%error('WINT direct target head evaluation failed')
++                  WRITE(IU6,'(A)') ' WINT_KERNEL: YUKAWA'
++                  WRITE(IU6,'(A,ES16.8)') ' WINT_KAPPA [1/Angstrom]: ',WINT_KAPPA
++                  WRITE(IU6,'(A,ES16.8)') ' WINT_EPS [dimensionless relative permittivity]: ',WINT_EPS
++                  WRITE(IU6,'(A,I18)') ' WS pair construction memory cap [bytes/rank]: ',1073741824_int64
++               ELSE
++                  WRITE(IU6,'(A)') ' WINT_KERNEL: BARE'
++               ENDIF
++               WRITE(IU6,'(A)') ' Evaluation: full PAW density'
++               WRITE(IU6,'(A,ES16.8)') ' WINT target head/(Omega*Nq) [eV]: ',HEAD*EDEPS/(4*PI*VOLUME)
++            ELSE
++               WRITE(IU6,'(A)') ' WANNIER_COULOMB_WS: HFRCUT=-2, full real-space BvK WS, bare Coulomb'
++            ENDIF
++            WRITE(IU6,'(A,3I8)') ' WS mesh: ',NK
++            WRITE(IU6,'(A,3I8)') ' WS FFT grid: ',NG
++            WRITE(IU6,'(A,ES16.8)') ' WS_TOL (MIC range/bandwidth control): ',WS_TOL
++            WRITE(IU6,'(A,ES16.8)') ' WS alpha [1/Angstrom]: ',ALPHA
++            WRITE(IU6,'(A,ES16.8)') ' WS inradius [Angstrom]: ',RIN
++            WRITE(IU6,'(A,ES16.8)') ' WS supercell volume [Angstrom^3]: ',VOLUME
++            WRITE(IU6,'(A,ES16.8)') ' WS head/(Omega*Nq) [eV]: ',HEAD*EDEPS/(4*PI*VOLUME)
++            WRITE(IU6,'(A,I18)') ' WS replicated cache [bytes/rank]: ',BYTES
++            DO I=1,3
++               WRITE(IU6,'(A,I1,A,3F18.9)') ' WS lattice vector ',I,' [Angstrom]: ',A(:,I)
++            ENDDO
++            IF (WINT_ENABLED) THEN
++               WRITE(IU6,'(A)') ' WS_NGRID: kernel Fourier-grid and WS-face quadrature convergence'
++               WRITE(IU6,'(A)') ' Full PAW density: converge VCUTOFF and NGX/NGY/NGZ independently'
++            ELSE
++               WRITE(IU6,'(A)') ' WS mode: no old Ewald/FSG head; converge finite-density and WS-face errors with WS_NGRID'
++            ENDIF
++            REPORTED=.TRUE.; REPORTED_A=A; REPORTED_TOL=WS_TOL; REPORTED_GRID=WS_NGRID
++            REPORTED_MODEL=WINT_MODEL; REPORTED_KAPPA=WINT_KAPPA; REPORTED_EPS=WINT_EPS
++            REPORTED_ENABLED=WINT_ENABLED
++         ENDIF
++      ENDIF
++    END SUBROUTINE WS_PREPARE_KERNEL
++
++    SUBROUTINE SET_GFAC_WAVEFUN_WS(WDES1,LATT_CUR,POTFAK)
++      USE constant, ONLY: PI,TPI,EDEPS
++      USE wave, ONLY: wavedes1
++      USE lattice, ONLY: latt
++      USE ws_coulomb, ONLY: ws_get
++      USE tutor, ONLY: vtutor
++      IMPLICIT NONE
++      TYPE(wavedes1), INTENT(IN) :: WDES1
++      TYPE(latt), INTENT(IN) :: LATT_CUR
++      REAL(q), INTENT(OUT) :: POTFAK(WDES1%NGVECTOR)
++      REAL(q) :: QV(3), VALUE, SCALE_WS
++      INTEGER :: NI,IERR
++      IF (WINT_BOUNDARY==WINT_BOUNDARY_SLAB) &
++         CALL vtutor%error('A layered interaction requires the normal matrix operator, not scalar Fourier factors')
++      CALL WS_PREPARE_KERNEL(LATT_CUR,-1)
++      SCALE_WS=EDEPS/(4*PI*LATT_CUR%OMEGA*REAL(WDES1%GRID%NPLWV,q))
++      DO NI=1,WDES1%NGVECTOR
++         QV=TPI*MATMUL(LATT_CUR%B,WDES1%VKPT+REAL([WDES1%IGX(NI),WDES1%IGY(NI),WDES1%IGZ(NI)],q))
++         CALL ws_get(QV,VALUE,IERR)
++         IF (IERR/=0) CALL vtutor%error('WS Fourier query is not commensurate with the supported Gamma mesh')
++         POTFAK(NI)=SCALE_WS*VALUE
++      ENDDO
++    END SUBROUTINE SET_GFAC_WAVEFUN_WS
++
++    SUBROUTINE SET_GFAC_WINT_REMAINDER(WDES1,LATT_CUR,POTFAK)
++      USE constant, ONLY: PI,TPI,EDEPS
++      USE wave, ONLY: wavedes1
++      USE lattice, ONLY: latt
++      USE ws_coulomb, ONLY: ws_get_pair
++      USE, INTRINSIC :: ieee_arithmetic, ONLY: ieee_is_finite
++      USE tutor, ONLY: vtutor
++      IMPLICIT NONE
++      TYPE(wavedes1), INTENT(IN) :: WDES1
++      TYPE(latt), INTENT(IN) :: LATT_CUR
++      REAL(q), INTENT(OUT) :: POTFAK(WDES1%NGVECTOR)
++      REAL(q) :: QV(3),BARE,REMAINDER,SCALE_WS
++      INTEGER :: NI,IERR
++      POTFAK=0._q
++      IF (WINT_MODEL==WINT_MODEL_BARE) RETURN
++      IF (WINT_BOUNDARY==WINT_BOUNDARY_SLAB) &
++         CALL vtutor%error('A layered interaction requires the normal matrix operator, not scalar Fourier factors')
++      CALL WS_PREPARE_KERNEL(LATT_CUR,-1)
++      SCALE_WS=EDEPS/(4*PI*LATT_CUR%OMEGA*REAL(WDES1%GRID%NPLWV,q))
++      DO NI=1,WDES1%NGVECTOR
++         QV=TPI*MATMUL(LATT_CUR%B,WDES1%VKPT+REAL([WDES1%IGX(NI),WDES1%IGY(NI),WDES1%IGZ(NI)],q))
++         CALL ws_get_pair(QV,BARE,REMAINDER,IERR)
++         IF (IERR/=0) CALL vtutor%error('WINT remainder Fourier query failed: noncommensurate q or coefficient overflow')
++         POTFAK(NI)=SCALE_WS*REMAINDER
++         IF (.NOT.IEEE_IS_FINITE(POTFAK(NI))) CALL vtutor%error('WINT remainder native coefficient overflow')
++      ENDDO
++    END SUBROUTINE SET_GFAC_WINT_REMAINDER
++
++    SUBROUTINE SET_GFAC_WINT_TARGET(WDES1,LATT_CUR,POTFAK)
++      USE constant, ONLY: PI,TPI,EDEPS
++      USE wave, ONLY: wavedes1
++      USE lattice, ONLY: latt
++      USE ws_coulomb, ONLY: ws_get,ws_get_screened
++      USE, INTRINSIC :: ieee_arithmetic, ONLY: ieee_is_finite
++      USE tutor, ONLY: vtutor
++      IMPLICIT NONE
++      TYPE(wavedes1), INTENT(IN) :: WDES1
++      TYPE(latt), INTENT(IN) :: LATT_CUR
++      REAL(q), INTENT(OUT) :: POTFAK(WDES1%NGVECTOR)
++      REAL(q) :: QV(3),TARGET,SCALE_WS
++      INTEGER :: NI,IERR
++      IF (WINT_BOUNDARY==WINT_BOUNDARY_SLAB) &
++         CALL vtutor%error('A layered interaction requires the normal matrix operator, not scalar Fourier factors')
++      CALL WS_PREPARE_KERNEL(LATT_CUR,-1)
++      SCALE_WS=EDEPS/(4*PI*LATT_CUR%OMEGA*REAL(WDES1%GRID%NPLWV,q))
++      DO NI=1,WDES1%NGVECTOR
++         QV=TPI*MATMUL(LATT_CUR%B,WDES1%VKPT+REAL([WDES1%IGX(NI),WDES1%IGY(NI),WDES1%IGZ(NI)],q))
++         IF (WINT_MODEL==WINT_MODEL_BARE) THEN
++            CALL ws_get(QV,TARGET,IERR)
++         ELSE
++            CALL ws_get_screened(QV,TARGET,IERR)
++         ENDIF
++         IF (IERR/=0) CALL vtutor%error('WINT direct target Fourier query failed: noncommensurate q or coefficient overflow')
++         POTFAK(NI)=SCALE_WS*TARGET
++         IF (.NOT.IEEE_IS_FINITE(POTFAK(NI))) CALL vtutor%error('WINT direct target native coefficient overflow')
++      ENDDO
++    END SUBROUTINE SET_GFAC_WINT_TARGET
++
+     SUBROUTINE SET_GFAC_WAVEFUN(WDES1, LATT_CUR, FSG, POTFAK, ENCUT, ENCUTSOFT)
+       USE constant
+       USE wave
+@@ -2453,6 +2907,7 @@
+       INTEGER NK
+ 
+       FSG_STORE=0
++      IF (WINT_CUTOFF_MODE==WINT_CUTOFF_WS) RETURN
+ 
+       ! uniform grid, and no use of HFKIDENT, then FSG is identical for all k-points
+       IF (KPOINTS_FULL%Mode>= MonkhorstPack .AND. KPOINTS_FULL%Mode <= GeneratingLattice .AND. &
+diff --git a/src/dmft.F b/src/dmft.F
+--- a/src/dmft.F
++++ b/src/dmft.F
+@@ -2,6 +2,10 @@
+ MODULE dmft 
+   USE prec
+   USE fock
++  USE wint_paw, ONLY: wint_paw_context,wint_paw_accumulator,WINT_PAW_PREPARE,WINT_PAW_RESET, &
++     WINT_PAW_BEGIN_ACCUMULATOR,WINT_PAW_ACCUMULATE_BATCH,WINT_PAW_ADD_ACCUMULATED,WINT_PAW_RESET_ACCUMULATOR, &
++     WINT_PAW_INFO,WINT_PAW_MEMORY_INFO
++  USE wint_layered, ONLY: wlayer_apply,wlayer_info
+   USE chi_base
+   USE wpot
+   USE lattice
+@@ -57,7 +61,174 @@
+   !print all matrix elements calculated
+   REAL(q),PRIVATE, SAVE :: VCUTOFF !high cutoff of V
+ 
+-  CONTAINS 
++  CONTAINS
++
++  SUBROUTINE WINT_CHECK_FINITE(MATRIX)
++    USE, INTRINSIC :: ieee_arithmetic, ONLY: ieee_is_finite
++    GDEF, INTENT(IN) :: MATRIX(:,:,:,:)
++    IF (.NOT.ALL(ieee_is_finite(REAL(MATRIX,q)))) &
++       CALL vtutor%error('Full-density interaction exceeds finite precision')
++#ifndef gammareal
++    IF (.NOT.ALL(ieee_is_finite(AIMAG(MATRIX)))) &
++       CALL vtutor%error('Full-density interaction exceeds finite precision')
++#endif
++  END SUBROUTINE
++
++  SUBROUTINE WINT_WRITE_MODEL_HEADER(IUNIT)
++    INTEGER, INTENT(IN) :: IUNIT
++    IF (.NOT.WINT_ENABLED) RETURN
++    IF (WINT_BOUNDARY==WINT_BOUNDARY_SLAB) THEN
++       SELECT CASE(WINT_MODEL)
++       CASE(WINT_MODEL_BARE)
++          WRITE(IUNIT,'(A)') '# Interaction kernel: BARE'
++       CASE(WINT_MODEL_YUKAWA)
++          WRITE(IUNIT,'(A)') '# Interaction kernel: YUKAWA'
++          WRITE(IUNIT,'(A,ES24.16)') '# WINT_KAPPA [1/Angstrom]: ',WINT_KAPPA
++       CASE(WINT_MODEL_RK_SHEET)
++          WRITE(IUNIT,'(A)') '# Interaction kernel: RK_SHEET'
++       CASE(WINT_MODEL_RK2D)
++          WRITE(IUNIT,'(A)') '# Interaction kernel: RK2D'
++       CASE(WINT_MODEL_DUAL_GATE)
++          WRITE(IUNIT,'(A)') '# Interaction kernel: DUAL_GATE'
++          WRITE(IUNIT,'(A,ES24.16)') '# WINT_GATE_D [Angstrom, midplane to each plate]: ',WINT_GATE_D
++       END SELECT
++       IF (WINT_MODEL==WINT_MODEL_RK_SHEET.OR.WINT_MODEL==WINT_MODEL_RK2D) &
++          WRITE(IUNIT,'(A,ES24.16)') '# WINT_R0 [Angstrom]: ',WINT_R0
++       IF (WINT_MODEL/=WINT_MODEL_BARE) &
++          WRITE(IUNIT,'(A,ES24.16)') '# WINT_EPS [relative permittivity]: ',WINT_EPS
++       IF (WINT_MODEL/=WINT_MODEL_RK2D) &
++          WRITE(IUNIT,'(A,ES24.16)') '# WINT_Z0 [Angstrom along the declared normal]: ',WINT_Z0
++       WRITE(IUNIT,'(A,3ES24.16)') '# WINT_NORMAL [Cartesian unit vector]: ',WINT_NORMAL_USED
++       WRITE(IUNIT,'(A,ES24.16)') '# Normal integration cell length [Angstrom]: ',WINT_LAYER_LZ
++       WRITE(IUNIT,'(A)') '# WINT_BOUNDARY: SLAB_WS; in-plane BvK WS and open normal cell'
++       WRITE(IUNIT,'(A)') '# Evaluation: full PAW density and normal Fourier-Galerkin operator'
++       RETURN
++    ENDIF
++    IF (WINT_MODEL==WINT_MODEL_YUKAWA) THEN
++       WRITE(IUNIT,'(A)') '# Interaction kernel: YUKAWA; BvK Wigner-Seitz domain'
++       WRITE(IUNIT,'(A,ES24.16)') '# WINT_KAPPA [1/Angstrom]: ',WINT_KAPPA
++       WRITE(IUNIT,'(A,ES24.16)') '# WINT_EPS [relative permittivity]: ',WINT_EPS
++    ELSE
++       WRITE(IUNIT,'(A)') '# Interaction kernel: BARE; BvK Wigner-Seitz domain'
++    ENDIF
++    WRITE(IUNIT,'(A)') '# Evaluation: direct projection on full PAW pair densities'
++  END SUBROUTINE
++
++  SUBROUTINE WINT_LAYER_APPLY_NATIVE(WQ,LATT_CUR,DENSITY,WORK,IERR,MESSAGE,AUDIT_UNIT)
++    TYPE(wavedes1), INTENT(IN) :: WQ
++    TYPE(latt), INTENT(IN) :: LATT_CUR
++    COMPLEX(q), INTENT(IN) :: DENSITY(:,:)
++    COMPLEX(q), INTENT(OUT) :: WORK(:,:)
++    INTEGER, INTENT(OUT) :: IERR
++    CHARACTER(*), INTENT(OUT) :: MESSAGE
++    INTEGER, INTENT(IN), OPTIONAL :: AUDIT_UNIT
++    INTEGER, ALLOCATABLE :: IG(:,:)
++    INTEGER :: IOS,NG
++    REAL(q) :: NATIVE_SCALE
++    IERR=0;MESSAGE='';NG=SIZE(DENSITY,1)
++    IF (GRIDHF%NPLWV/=WQ%GRID%NPLWV) THEN
++       IERR=1;MESSAGE='Layered projection requires matching native density and response FFT normalizations';RETURN
++    ENDIF
++    IF (NG/=WQ%NGVECTOR.OR.ANY(SHAPE(WORK)/=SHAPE(DENSITY))) THEN
++       IERR=1;MESSAGE='Layered projection density dimensions do not match the native response basis';RETURN
++    ENDIF
++    ALLOCATE(IG(3,NG),STAT=IOS)
++    IF (IOS/=0) THEN
++       IERR=2;MESSAGE='Layered projection G-index allocation failed';RETURN
++    ENDIF
++    IG(1,:)=WQ%IGX(1:NG);IG(2,:)=WQ%IGY(1:NG);IG(3,:)=WQ%IGZ(1:NG)
++    NATIVE_SCALE=EDEPS/(4*PI*LATT_CUR%OMEGA*REAL(WQ%GRID%NPLWV,q))
++    IF (PRESENT(AUDIT_UNIT)) THEN
++       CALL wlayer_apply(IG,WQ%VKPT,DENSITY,NATIVE_SCALE,WORK,IERR,MESSAGE,AUDIT_UNIT)
++    ELSE
++       CALL wlayer_apply(IG,WQ%VKPT,DENSITY,NATIVE_SCALE,WORK,IERR,MESSAGE)
++    ENDIF
++    DEALLOCATE(IG)
++  END SUBROUTINE WINT_LAYER_APPLY_NATIVE
++
++  SUBROUTINE WINT_AUDIT_LAYER_QBLOCK(WDES,WQ,NQ,NW,DENSITY,WORK,MATRIX,SCALE,LATT_CUR)
++    USE iso_fortran_env, ONLY: int32
++    TYPE(wavedes), INTENT(IN) :: WDES
++    TYPE(wavedes1), INTENT(IN) :: WQ
++    TYPE(latt), INTENT(IN) :: LATT_CUR
++    INTEGER, INTENT(IN) :: NQ,NW
++    REAL(q), INTENT(IN) :: SCALE
++    COMPLEX(q), INTENT(IN) :: DENSITY(:,:)
++    COMPLEX(q), INTENT(INOUT) :: WORK(:,:)
++    GDEF, INTENT(IN) :: MATRIX(:,:,:,:)
++    CHARACTER(1024) :: DIRECTORY,FILENAME,MESSAGE
++    INTEGER :: STATUS,IUNIT,IOS,IERR,LAYOUT(9),NG
++#ifdef gammareal
++    RETURN
++#else
++    CALL GET_ENVIRONMENT_VARIABLE('VASP_WINT_AUDIT_DIR',DIRECTORY,STATUS=STATUS)
++    IF (STATUS/=0.OR.LEN_TRIM(DIRECTORY)==0) RETURN
++    NG=SIZE(DENSITY,1)
++    LAYOUT=1;LAYOUT(1)=WINT_MODEL
++    IF (ASSOCIATED(WDES%COMM_KINTER)) LAYOUT(2:3)=[WDES%COMM_KINTER%NODE_ME,WDES%COMM_KINTER%NCPU]
++    IF (ASSOCIATED(WDES%COMM_INB)) LAYOUT(4:5)=[WDES%COMM_INB%NODE_ME,WDES%COMM_INB%NCPU]
++    IF (ASSOCIATED(WDES%COMM_INTER)) LAYOUT(6:7)=[WDES%COMM_INTER%NODE_ME,WDES%COMM_INTER%NCPU]
++    IF (ASSOCIATED(WDES%COMM)) LAYOUT(8:9)=[WDES%COMM%NODE_ME,WDES%COMM%NCPU]
++    WRITE(FILENAME,'(A,A,I5.5,A,I5.5,A)') TRIM(DIRECTORY),'/q',NQ,'-rank',WDES%COMM%NODE_ME,'.bin'
++    OPEN(NEWUNIT=IUNIT,FILE=TRIM(FILENAME),ACCESS='STREAM',FORM='UNFORMATTED',STATUS='REPLACE',IOSTAT=IOS)
++    IF (IOS/=0) CALL vtutor%error('Could not open explicitly requested layered q-block diagnostic')
++    WRITE(IUNIT) INT([3,NG,NW,NQ,WDES%NKPTS,GRIDHF%NPLWV,WQ%GRID%NPLWV,LAYOUT,WINT_BOUNDARY],int32)
++    WRITE(IUNIT) WQ%VKPT,SCALE,WINT_KAPPA,WINT_EPS,WINT_R0,WINT_GATE_D,WINT_Z0,WINT_LAYER_LZ
++    WRITE(IUNIT) INT(WQ%IGX(1:NG),int32),INT(WQ%IGY(1:NG),int32),INT(WQ%IGZ(1:NG),int32)
++    WRITE(IUNIT) DENSITY,MATRIX
++    CALL WINT_LAYER_APPLY_NATIVE(WQ,LATT_CUR,DENSITY,WORK,IERR,MESSAGE,AUDIT_UNIT=IUNIT)
++    IF (IERR/=0) CALL vtutor%error('Layered q-block diagnostic failed: '//TRIM(MESSAGE))
++    CLOSE(IUNIT)
++#endif
++  END SUBROUTINE WINT_AUDIT_LAYER_QBLOCK
++
++  SUBROUTINE WINT_AUDIT_QBLOCK(WDES,WQ,NQ,NW,TARGET,DENSITY,WORK,MATRIX,SCALE,LATT_CUR)
++    USE iso_fortran_env, ONLY: int32
++    TYPE(wavedes), INTENT(IN) :: WDES
++    TYPE(wavedes1), INTENT(IN) :: WQ
++    TYPE(latt), INTENT(IN) :: LATT_CUR
++    INTEGER, INTENT(IN) :: NQ,NW
++    REAL(q), INTENT(IN) :: TARGET(:),SCALE
++    COMPLEX(q), INTENT(IN) :: DENSITY(:,:)
++    COMPLEX(q), INTENT(INOUT) :: WORK(:,:)
++    GDEF, INTENT(IN) :: MATRIX(:,:,:,:)
++    GDEF :: FULL_BARE(NW,NW,NW,NW)
++    REAL(q), ALLOCATABLE :: BARE(:)
++    CHARACTER(1024) :: DIRECTORY,FILENAME
++    INTEGER :: STATUS,IUNIT,IOS,I,LAYOUT(9)
++#ifdef gammareal
++    RETURN
++#else
++    CALL GET_ENVIRONMENT_VARIABLE('VASP_WINT_AUDIT_DIR',DIRECTORY,STATUS=STATUS)
++    IF (STATUS/=0.OR.LEN_TRIM(DIRECTORY)==0) RETURN
++    ALLOCATE(BARE(SIZE(TARGET)),STAT=IOS)
++    IF (IOS/=0) CALL vtutor%error('Full-density q-block diagnostic allocation failed')
++    CALL SET_GFAC_WAVEFUN_WS(WQ,LATT_CUR,BARE)
++    WORK=DENSITY
++    DO I=1,NW*NW
++       CALL APPLY_GFAC_WAVEFUN(WQ,WORK(1,I),BARE)
++    ENDDO
++    CALL GGEMM(trans,'N',NW*NW,NW*NW,m_ SIZE(TARGET),one,WORK(1,1),m_ SIZE(WORK,1), &
++       DENSITY(1,1),m_ SIZE(DENSITY,1),zero,FULL_BARE(1,1,1,1),NW*NW)
++    LAYOUT=1
++    LAYOUT(1)=WINT_MODEL
++    IF (ASSOCIATED(WDES%COMM_KINTER)) LAYOUT(2:3)=[WDES%COMM_KINTER%NODE_ME,WDES%COMM_KINTER%NCPU]
++    IF (ASSOCIATED(WDES%COMM_INB)) LAYOUT(4:5)=[WDES%COMM_INB%NODE_ME,WDES%COMM_INB%NCPU]
++    IF (ASSOCIATED(WDES%COMM_INTER)) LAYOUT(6:7)=[WDES%COMM_INTER%NODE_ME,WDES%COMM_INTER%NCPU]
++    IF (ASSOCIATED(WDES%COMM)) LAYOUT(8:9)=[WDES%COMM%NODE_ME,WDES%COMM%NCPU]
++    WRITE(FILENAME,'(A,A,I5.5,A,I5.5,A)') TRIM(DIRECTORY),'/q',NQ,'-rank',WDES%COMM%NODE_ME,'.bin'
++    OPEN(NEWUNIT=IUNIT,FILE=TRIM(FILENAME),ACCESS='STREAM',FORM='UNFORMATTED',STATUS='REPLACE',IOSTAT=IOS)
++    IF (IOS/=0) CALL vtutor%error('Could not open explicitly requested full-density q-block diagnostic')
++    WRITE(IUNIT) INT([2,SIZE(TARGET),NW,NQ,WDES%NKPTS,GRIDHF%NPLWV,WQ%GRID%NPLWV,LAYOUT],int32)
++    WRITE(IUNIT) WQ%VKPT,SCALE,WINT_KAPPA,WINT_EPS
++    WRITE(IUNIT) WQ%IGX(1:SIZE(TARGET)),WQ%IGY(1:SIZE(TARGET)),WQ%IGZ(1:SIZE(TARGET))
++    WRITE(IUNIT) BARE,TARGET,DENSITY,FULL_BARE,MATRIX
++    CLOSE(IUNIT)
++    DEALLOCATE(BARE)
++#endif
++  END SUBROUTINE
++
++ 
+ !*********************************************************************
+ ! 
+ !> High level scheduler:
+@@ -195,6 +366,7 @@
+      !using Gaunt coeffiecients and Slater integrals
+      LMAX_FOCKAE_STORE=LMAX_FOCKAE
+      IF (MIMIC_US) THEN
++        IF (WINT_ENABLED) CALL vtutor%error('Explicit Wannier kernels require full PAW; MIMIC_US is unsupported')
+        LMAXMP2=-1
+      ELSE
+        LMAXMP2=4
+@@ -416,6 +588,7 @@
+      USE mlwf
+      USE locproj
+      USE crpa, ONLY : CRPA_NUM_WAN
++     USE ws_coulomb, ONLY: ws_info
+ 
+      IMPLICIT NONE
+      TYPE(wavedes) WDES
+@@ -446,6 +619,9 @@
+      INTEGER NKPTS_IRZ
+      INTEGER LMAX_FOCKAE_STORE
+      REAL(q) :: EFERMI(WDES%ISPIN)
++     REAL(q) :: WS_ALPHA_LOCAL,WS_RIN_LOCAL,WS_VOLUME_LOCAL,WS_PAW_RADIUS
++     INTEGER :: WS_GRID_LOCAL(3)
++     INTEGER(KIND=8) :: WS_BYTES_LOCAL
+ 
+      GDEF, ALLOCATABLE :: CRIJKL(:,:,:,:)   !multi-centre Coulomb integrals
+      PROFILING_START( 'dmft_matrix_elements')
+@@ -468,6 +644,28 @@
+         W%EFERMI = EFERMI
+      ENDIF
+  
++     IF (WINT_CUTOFF_MODE==WINT_CUTOFF_WS) THEN
++        CALL WS_PREPARE_KERNEL(LATT_CUR,IO%IU6)
++        IF (.NOT.WINT_ENABLED) THEN
++        CALL ws_info(WS_GRID_LOCAL,WS_ALPHA_LOCAL,WS_RIN_LOCAL,WS_VOLUME_LOCAL,WS_BYTES_LOCAL)
++        WS_PAW_RADIUS=0._q
++        DO I=1,T_INFO%NTYP
++           IF (ASSOCIATED(P(I)%R%R)) THEN
++              WS_PAW_RADIUS=MAX(WS_PAW_RADIUS,P(I)%R%RMAX,P(I)%RDEP)
++           ENDIF
++        ENDDO
++        IF (ASSOCIATED(FAST_AUG_FOCK%PSRMAX)) &
++           WS_PAW_RADIUS=MAX(WS_PAW_RADIUS,MAXVAL(FAST_AUG_FOCK%PSRMAX))
++        IF (2*WS_PAW_RADIUS>=WS_RIN_LOCAL) &
++           CALL vtutor%error('WS cell is too small to retain the native bare PAW one-center correction')
++        IF (IO%IU6>=0) THEN
++           WRITE(IO%IU6,'(A,F14.7)') ' WS PAW local pair support bound [Angstrom]: ',2*WS_PAW_RADIUS
++           WRITE(IO%IU6,'(A)') ' WS PAW: local correction retained; augmentation pairs crossing WS faces require BvK mesh convergence'
++           WRITE(IO%IU6,'(A)') ' WS PAW: FFT refinement alone does not validate boundary-pair augmentation compensation'
++        ENDIF
++        ENDIF
++     ENDIF
++
+      !we need the projection matrices U_matrix and U_matrix_opt in the following
+      !so if they are not stored, determine them now
+      IF ( CRPA_NUM_WAN < 1) THEN
+@@ -513,6 +711,7 @@
+      !using Gaunt coeffiecients and Slater integrals
+      LMAX_FOCKAE_STORE=LMAX_FOCKAE
+      IF (MIMIC_US) THEN
++        IF (WINT_ENABLED) CALL vtutor%error('Explicit Wannier kernels require full PAW; MIMIC_US is unsupported')
+        LMAXMP2=-1
+      ELSE
+        LMAXMP2=4
+@@ -594,6 +793,14 @@
+         ENDIF
+ #endif
+         ENDIF
++
++     IF (WINT_ENABLED) THEN
++        LMAX_FOCKAE=LMAX_FOCKAE_STORE
++        CALL WRITE_DMFT_MATRIX_ELEMENTS(IO,WDES%ISPIN,.FALSE.,CIJKL,COMEGA=COMEGA)
++        CALL DUMP_ONE_ELECTRON_FCIINPUT(WDES,W,WDES,CIJKL,IO)
++        IF (IO%IU0>=0) WRITE(IO%IU0,'(A)') ' Full PAW Wannier interaction projection completed'
++        GOTO 1
++     ENDIF
+ 
+      !reduce cutoff and compute V using LMAXFOCKE = 4 and LMAXMP2 = -1
+      LMAXMP2=-1
+@@ -935,6 +1142,7 @@
+              OPEN(NEWUNIT=IUNIT,FILE=FILENAME//TRIM(ADJUSTL(EXTENSION)),STATUS='REPLACE')
+               !
+              ! write out positions of Ri
++             CALL WINT_WRITE_MODEL_HEADER(IUNIT)
+              WRITE( IUNIT ,'(A)')'# File generated by VASP contains Coulomb matrix elements'
+              IF( FILENAME(1:1) == 'V' )THEN
+                  WRITE( IUNIT ,'(A)')'# V_ijkl = [ij,R|kl,0] '
+@@ -1119,6 +1327,7 @@
+        WDES,W,KPOINTS,LATT_CUR,T_INFO,P,WGW,NB_START,NB_STOP,COMEGA,LMAX,IO,WIJKL,PIJKL)
+ 
+     USE base
++    USE iso_fortran_env, ONLY: int64
+     USE pseudo
+     USE mpimy
+     USE mkpoints
+@@ -1175,11 +1384,20 @@
+     GDEF      , ALLOCATABLE :: CRHO14(:,:)    ! one center charge
+     GDEF      , ALLOCATABLE :: CRHO23(:,:)    ! one center charge
+     GDEF, ALLOCATABLE :: CHAM(:,:,:,:)    ! hamilton matrix
+-    LOGICAL :: LFULL
++    LOGICAL :: LFULL,LWINT_HIGH
++    TYPE(wint_paw_context) :: WINT_CTX
++    TYPE(wint_paw_accumulator) :: WINT_ACC
++    CHARACTER(1024) :: WINT_MESSAGE
++    INTEGER :: WINT_PLANE_MAX(2),WINT_PLANE_INDEX(2)
++    REAL(q) :: WINT_PLANE_DROPPED,WINT_PLANE_SAMPLES
++    INTEGER :: WINT_NG,WINT_NU,WINT_DEGREE,WINT_NG2(2),WINT_NTLOW,WINT_NTHIGH,WINT_MAXMODE
++    INTEGER(int64) :: WINT_BYTES,WINT_CURRENT,WINT_PEAK,WINT_LIMIT
++    REAL(q) :: WINT_NFFT,WINT_BOUND,WINT_CHECK,WINT_RIN,WINT_ALPHA,WINT_LZ,WINT_QUADERR
+     REAL(q) :: POTFAK(GRIDHF%MPLWV)       ! 1/(G+dk)**2 (G)
+     INTEGER :: ISP1, ISP2
+     INTEGER :: R1, N1, N2, N3, N4
+     COMPLEX :: CPHASE
++    COMPLEX(q) :: CPHASE_WINT
+     CHARACTER (LEN=16) :: FILENAME_NODE
+     ! one-center terms
+     TYPE (one_center_handle), POINTER :: H => NULL()
+@@ -1192,11 +1410,20 @@
+     INTEGER :: NQ_
+     ! two electron four orbital integrals in a Wannier basis
+     PROFILING_START( 'calculate_wijkl_twocentre' )
++    WINT_PLANE_MAX=0;WINT_PLANE_DROPPED=0;WINT_PLANE_SAMPLES=0
++    LWINT_HIGH=WINT_ENABLED.AND.LMAX>=0.AND..NOT.ASSOCIATED(WPOTH)
++    IF (LWINT_HIGH) THEN
++       IF (WDES%ISPIN/=1) CALL vtutor%error('Explicit Wannier kernels require ISPIN=1; SOC spinors are supported')
++       IF (WDES%COMM_INB%NCPU/=1) CALL vtutor%error('Explicit Wannier kernels require NCORE=1')
++#ifdef gammareal
++       CALL vtutor%error('Explicit Wannier kernels require a complex standard or noncollinear executable')
++#endif
++    ENDIF
+      
+ !=======================================================================
+ ! preparation of four-orbital related quantities
+ !=======================================================================
+-    IF (LMAX>=0) THEN
++    IF (LMAX>=0.AND..NOT.LWINT_HIGH) THEN
+        CALL SET_UP_ONE_CENTER_H(WDES, P, T_INFO, LMAX, H)
+     ENDIF
+ 
+@@ -1296,13 +1523,48 @@
+        IF (NQ>=0) THEN
+           CALL SETWDES(WGW, WGWQ, NQ)
+           NP =WGWQ%NGVECTOR
++          IF (LWINT_HIGH.AND.WINT_BOUNDARY==WINT_BOUNDARY_SLAB) THEN
++             CALL wlayer_info(WINT_NG2,WINT_RIN,WINT_ALPHA,WINT_LZ,WINT_BYTES, &
++                              WINT_NTLOW,WINT_NTHIGH,WINT_MAXMODE,WINT_QUADERR)
++             DO I=1,NP
++                WINT_PLANE_INDEX=NINT(([REAL(WGWQ%IGX(I),q),REAL(WGWQ%IGY(I),q)]+WGWQ%VKPT(1:2))* &
++                                       REAL([KPOINTS_FULL%NKPX,KPOINTS_FULL%NKPY],q))
++                WINT_PLANE_MAX=MAX(WINT_PLANE_MAX,ABS(WINT_PLANE_INDEX))
++                IF (ANY(ABS(WINT_PLANE_INDEX)>=WINT_NG2/2)) WINT_PLANE_DROPPED=WINT_PLANE_DROPPED+1
++             ENDDO
++             WINT_PLANE_SAMPLES=WINT_PLANE_SAMPLES+REAL(NP,q)
++          ENDIF
++
+ 
+           ! set the right potential in POTFAK
++          IF (WINT_CUTOFF_MODE==WINT_CUTOFF_WS) THEN
++             IF (ASSOCIATED(WPOTH)) CALL vtutor%error('WS cannot be replaced by an imported screened W potential')
++             IF (LWINT_HIGH.AND.WINT_BOUNDARY==WINT_BOUNDARY_SLAB) THEN
++                POTFAK=0._q
++             ELSE IF (LWINT_HIGH) THEN
++                CALL SET_GFAC_WINT_TARGET(WGWQ,LATT_CUR,POTFAK)
++             ELSE
++                CALL SET_GFAC_WAVEFUN_WS(WGWQ,LATT_CUR,POTFAK)
++             ENDIF
++          ELSE
+           CALL SET_GFAC_WAVEFUN(WGWQ, LATT_CUR, FSG_STORE(1), POTFAK ) ! FSG = FSG_STORE(1) or 0._q (convergence correction)?
++          ENDIF
+           ! or possibly read screened potential from file
+           IF (ASSOCIATED(WPOTH)) CALL GET_WPOT( WPOTH, NQ, POTFAK, LFULL)
+ 
+           ALLOCATE( GCHG14(NP, NGLB* NGLB ), GCHG23(NP, NGLB* NGLB ), CHAM(NGLB, NGLB, NGLB, NGLB))
++          IF (LWINT_HIGH) THEN
++             CALL WINT_PAW_PREPARE(WINT_CTX,WGWQ,P,T_INFO,LATT_CUR,IERR,WINT_MESSAGE,NFFT=GRIDHF%NPLWV)
++             IF (IERR/=0) CALL vtutor%error('Full PAW density preparation failed: '//TRIM(WINT_MESSAGE))
++             IF (IO%IU6>=0.AND.NQ==1) THEN
++                CALL WINT_PAW_INFO(WINT_CTX,WINT_NG,WINT_NU,WINT_BYTES,WINT_NFFT,WINT_DEGREE,WINT_BOUND,WINT_CHECK)
++                WRITE(IO%IU6,'(A,I0)') ' WINT radial Chebyshev degree: ',WINT_DEGREE
++                WRITE(IO%IU6,'(A,ES16.8)') ' WINT radial interpolation truncation bound: ',WINT_BOUND
++                WRITE(IO%IU6,'(A,ES16.8)') ' WINT radial interpolation check discrepancy: ',WINT_CHECK
++             ENDIF
++             CALL WINT_PAW_BEGIN_ACCUMULATOR(WINT_CTX,NGLB*NGLB,WINT_ACC,IERR,WINT_MESSAGE)
++             IF (IERR/=0) CALL vtutor%error('PAW projector accumulator failed: '//TRIM(WINT_MESSAGE))
++          ENDIF
+           IF (ASSOCIATED(H).AND..NOT.ASSOCIATED(WPOTH)) THEN
+              ALLOCATE(CRHO14(H%TOTAL_ENTRIES, NGLB* NGLB ), CRHO23(H%TOTAL_ENTRIES, NGLB* NGLB )) 
+           ELSE
+@@ -1363,10 +1625,18 @@
+ !==========================================================================
+           IF (NQ>=0) THEN
+              CALL SETWDES(WHF%WDES,WDESK4,K4)
++             IF (LWINT_HIGH) THEN
++                CALL ONEELECTRON_CHARGE(WHF,H,LATT_CUR,WGW,W1,K1,W4,K4,NB_START,NGLB,NFFT, &
++                   GCHG14,CRHO14,FULL_DENSITY=.TRUE.)
++                CALL WINT_PAW_ACCUMULATE_BATCH(WINT_CTX,WINT_ACC,W1,W4, &
++                   WHF%WDES%VKPT(:,K1)-WHF%WDES%VKPT(:,K4),IERR,WINT_MESSAGE)
++                IF (IERR/=0) CALL vtutor%error('PAW projector accumulation failed: '//TRIM(WINT_MESSAGE))
++             ELSE
+              CALL ONEELECTRON_CHARGE( &
+                   WHF,H,LATT_CUR, WGW, &
+                   W1, K1, W4, K4, NB_START, NGLB, NFFT, &
+                   GCHG14, CRHO14)
++             ENDIF
+                     
+              !=============================================================
+              ! calculation of PIJKL
+@@ -1379,6 +1649,10 @@
+        ENDDO !  k1
+ 
+        IF (NQ>=0) THEN
++          IF (LWINT_HIGH) THEN
++             CALL WINT_PAW_ADD_ACCUMULATED(WINT_CTX,WINT_ACC,GCHG14,IERR,WINT_MESSAGE)
++             IF (IERR/=0) CALL vtutor%error('Full PAW density construction failed: '//TRIM(WINT_MESSAGE))
++          ENDIF
+           DO N=1,NGLB*NGLB
+              GCHG14(1:NP,N)=GCHG14(1:NP,N)*SQRT((1.0_q/GRIDHF%NPLWV))
+           ENDDO
+@@ -1400,6 +1674,9 @@
+                      WPOTH%WPOT(NQ)%RESPONSEFUN(1,1,1), SIZE(WPOTH%WPOT(NQ)%RESPONSEFUN,1), GCHG14(1,1), SIZE(GCHG14,1), &
+                      (0.0_q,0.0_q), GCHG23(1,1), SIZE(GCHG23,1) )
+              ENDIF
++          ELSE IF (LWINT_HIGH.AND.WINT_BOUNDARY==WINT_BOUNDARY_SLAB) THEN
++             CALL WINT_LAYER_APPLY_NATIVE(WGWQ,LATT_CUR,GCHG14,GCHG23,IERR,WINT_MESSAGE)
++             IF (IERR/=0) CALL vtutor%error('Layered interaction application failed: '//TRIM(WINT_MESSAGE))
+           ELSE
+              CALL ZCOPY( SIZE(GCHG14,1)*NGLB*NGLB,  GCHG14(1,1), 1, GCHG23(1,1), 1)
+              ! multiply with potential factor
+@@ -1425,6 +1702,14 @@
+                   CRHO23(1,1), SIZE(CRHO23,1), CRHO14(1,1), SIZE(CRHO14,1), &
+                   one , CHAM(1,1,1,1), SIZE(CHAM,1)*SIZE(CHAM,2))
+              NFLOAT=NFLOAT+8._q*NGLB*NGLB*NGLB*NGLB*H%TOTAL_ENTRIES
++          ENDIF
++          IF (LWINT_HIGH) THEN
++             CALL WINT_CHECK_FINITE(CHAM)
++             IF (WINT_BOUNDARY==WINT_BOUNDARY_SLAB) THEN
++                CALL WINT_AUDIT_LAYER_QBLOCK(WDES,WGWQ,NQ,NGLB,GCHG14,GCHG23,CHAM,SCALE,LATT_CUR)
++             ELSE
++             CALL WINT_AUDIT_QBLOCK(WDES,WGWQ,NQ,NGLB,POTFAK(1:NP),GCHG14,GCHG23,CHAM,SCALE,LATT_CUR)
++             ENDIF
+           ENDIF
+           DO N2=1,NGLB
+              DO N3=1,NGLB
+@@ -1440,7 +1725,11 @@
+              DO R1=1,WDES%NKPTS
+                 !CPHASE= EXP(CITPI* (+SUM(WDES%VKPT(:,K1)*WPOS(:,R1)-SUM(WDES%VKPT(:,K4)*WPOS(:,R1)))))
+                 !> this phase factor makes much more sense: k1-k4 = q 
++                IF (LWINT_HIGH) THEN
++                   CPHASE_WINT=EXP(CITPI*SUM(WGWQ%VKPT*WPOS(:,R1)))
++                ELSE
+                 CPHASE= EXP(CITPI* (SUM(WGWQ%VKPT*WPOS(:,R1))))
++                ENDIF
+                 
+                 DO N1=1,NGLB
+                    DO N2=1,NGLB
+@@ -1448,7 +1737,12 @@
+                          DO N4=1,NGLB
+                             !IDX = (N4-1) * NGLB**3 + (N3-1) * NGLB**2 + (N2-1) * NGLB + N1
+                             IDX = (N1-1) * NGLB**3 + (N2-1) * NGLB**2 + (N3-1) * NGLB + N4
++                            IF (LWINT_HIGH) THEN
++                               TWO_CENTRE_4W(R1,IDX,ISP1,ISP1)=TWO_CENTRE_4W(R1,IDX,ISP1,ISP1)+ &
++                                  CHAM(N1,N4,N3,N2)*SCALE*SCALE*SCALE*CPHASE_WINT
++                            ELSE
+                             TWO_CENTRE_4W(R1,IDX,ISP1,ISP1)=TWO_CENTRE_4W(R1,IDX,ISP1,ISP1)+CHAM(N1,N4,N3,N2)*SCALE*SCALE*SCALE*CPHASE
++                            ENDIF
+                          ENDDO
+                       ENDDO
+                    ENDDO
+@@ -1565,9 +1859,37 @@
+     ENDDO ! spin
+ 
+     IF (NQ>=0) THEN
++       IF (LWINT_HIGH) THEN
++          CALL WINT_PAW_RESET_ACCUMULATOR(WINT_ACC)
++          CALL WINT_PAW_RESET(WINT_CTX)
++       ENDIF
+        DEALLOCATE( GCHG14, GCHG23, CRHO14, CRHO23, CHAM)
+     ENDIF
+     ENDDO nqloop
++    IF (LWINT_HIGH.AND.WINT_BOUNDARY==WINT_BOUNDARY_SLAB) THEN
++       CALLMPI( M_max_i(WGW%COMM_INTER,WINT_PLANE_MAX,2))
++       CALLMPI( M_sum_d(WGW%COMM_INTER,WINT_PLANE_DROPPED,1))
++       CALLMPI( M_sum_d(WGW%COMM_INTER,WINT_PLANE_SAMPLES,1))
++    ENDIF
++    IF (LWINT_HIGH.AND.IO%IU6>=0) THEN
++       CALL WINT_PAW_MEMORY_INFO(WINT_CURRENT,WINT_PEAK,WINT_LIMIT)
++       WRITE(IO%IU6,'(A,I0)') ' WINT owned workspace peak on reporting rank [bytes]: ',WINT_PEAK
++       WRITE(IO%IU6,'(A,I0)') ' WINT owned workspace limit [bytes]: ',WINT_LIMIT
++       IF (WINT_BOUNDARY==WINT_BOUNDARY_SLAB) THEN
++          CALL wlayer_info(WINT_NG2,WINT_RIN,WINT_ALPHA,WINT_LZ,WINT_BYTES, &
++                           WINT_NTLOW,WINT_NTHIGH,WINT_MAXMODE,WINT_QUADERR)
++          WRITE(IO%IU6,'(A,I0)') ' WINT layered owned workspace peak [bytes]: ',WINT_BYTES
++          WRITE(IO%IU6,'(A,I0)') ' WINT largest normal Fourier index: ',WINT_MAXMODE
++          WRITE(IO%IU6,'(A,2I10)') ' WINT largest sampled in-plane WS indices: ',WINT_PLANE_MAX
++          WRITE(IO%IU6,'(A,2I10)') ' WINT low-t plane FFT open index limits: ',WINT_NG2/2
++          WRITE(IO%IU6,'(A,I0,A,I0)') ' WINT low-t coefficients beyond the plane cache: ', &
++             NINT(WINT_PLANE_DROPPED,kind=int64),' / ',NINT(WINT_PLANE_SAMPLES,kind=int64)
++          WRITE(IO%IU6,'(A)') ' WINT high-t analytic factors retain every density mode; '// &
++             'WS_NGRID controls low-t Fourier truncation'
++
++          WRITE(IO%IU6,'(A,ES16.8)') ' WINT layered normal-moment quadrature residual [dimensionless]: ',WINT_QUADERR
++       ENDIF
++    ENDIF
+ !==========================================================================
+     CALL STOP_TIMING("WIJKL+",IO%IU6,XMLTAG='total')
+ 
+@@ -2714,7 +3036,7 @@
+ 
+   SUBROUTINE ONEELECTRON_CHARGE( WHF, H, LATT_CUR, WGW, &
+        W1, K1, W4, K4, NB_START, NGLB, NFFT, &
+-       GCHG14, CRHO14 )
++       GCHG14, CRHO14, FULL_DENSITY)
+ 
+     USE wave_high
+     USE constant
+@@ -2742,7 +3064,8 @@
+     COMPLEX(q) :: GWORK( MAX(GRIDHF%MPLWV,WGW%GRID%MPLWV))
+     COMPLEX(q) :: CPHASE(GRIDHF%MPLWV)
+     GDEF, ALLOCATABLE :: CRHOLM(:), CRHO_TMP(:,:) ! augmentation occupancy matrix
+-    LOGICAL LPHASE
++    LOGICAL LPHASE,LFULL_DENSITY
++    LOGICAL, OPTIONAL, INTENT(IN) :: FULL_DENSITY
+ 
+     ! set the descriptor for wavefunctions at the point k1-k4
+     ! the product w*_k4,n4(r) w_k1,n1(r) corresponds to a wavevector q
+@@ -2758,7 +3081,9 @@
+           str(K1) // " " // str(K4) // " " // str(NP) // " " // str(SIZE(GCHG14,1)), __FILE__, __LINE__)
+     ENDIF
+ 
+-    ALLOCATE(CRHOLM(AUG_DES%NPRO*WHF%WDES%NRSPINORS))
++    LFULL_DENSITY=.FALSE.
++    IF (PRESENT(FULL_DENSITY)) LFULL_DENSITY=FULL_DENSITY
++    IF (.NOT.LFULL_DENSITY) ALLOCATE(CRHOLM(AUG_DES%NPRO*WHF%WDES%NRSPINORS))
+     IF (ASSOCIATED(H).AND..NOT.ASSOCIATED(WPOTH)) THEN
+        ALLOCATE(CRHO_TMP(H%TOTAL_ENTRIES,1))
+     ENDIF
+@@ -2773,7 +3098,7 @@
+     ! to cure the problem
+     CALL SETPHASE(WHF%WDES%VKPT(:,K1)-WHF%WDES%VKPT(:,K4)-WHF%WDES%VKPT(:,NQ), GRIDHF,CPHASE,LPHASE)
+     ! set phase factor in fast_aug
+-    CALL PHASER_HF(GRIDHF, LATT_CUR, FAST_AUG_FOCK, WHF%WDES%VKPT(:,K1)-WHF%WDES%VKPT(:,K4))
++    IF (.NOT.LFULL_DENSITY) CALL PHASER_HF(GRIDHF, LATT_CUR, FAST_AUG_FOCK, WHF%WDES%VKPT(:,K1)-WHF%WDES%VKPT(:,K4))
+  
+     DO N4=1,NGLB
+        NB4_INTO_TOT=N4+NB_START-1
+@@ -2781,7 +3106,13 @@
+        DO N1=1,NGLB
+           NB1_INTO_TOT=N1+NB_START-1
+           
+-          IF (ASSOCIATED(H).AND. .NOT.ASSOCIATED(WPOTH)) THEN
++          IF (LFULL_DENSITY) THEN
++#ifdef gammareal
++             CALL vtutor%error('Full PAW pair density requires a complex executable')
++#else
++             CALL PW_CHARGE_TRACE(W1(N1)%WDES1,GWORK(1),W1(N1)%CR(1),W4(N4)%CR(1))
++#endif
++          ELSE IF (ASSOCIATED(H).AND. .NOT.ASSOCIATED(WPOTH)) THEN
+              CALL FOCK_CHARGE_ONE_CENTER_NOINT( W1(N1), W4(N4), GWORK(1), &
+                   H, CRHO_TMP, CRHOLM,  SIZE(CRHOLM))
+              IF (LPHASE) THEN
+@@ -2802,7 +3133,7 @@
+     ENDDO
+     
+     ! deallocation
+-    DEALLOCATE(CRHOLM)
++    IF (ALLOCATED(CRHOLM)) DEALLOCATE(CRHOLM)
+     IF (ASSOCIATED(H).AND..NOT.ASSOCIATED(WPOTH)) THEN
+        DEALLOCATE(CRHO_TMP)
+     ENDIF
+@@ -3356,6 +3687,16 @@
+         ENDDO
+      ENDIF 
+ 
++     IF (WINT_CUTOFF_MODE==WINT_CUTOFF_WS) THEN
++        IF (.NOT.LVPOT.OR.LWPOT.OR.LCRPA.OR..NOT.L2E4W_ALL) &
++           CALL vtutor%error('WS requires native bare 2E4WA: LVPOT=T and LWPOT=F, without cRPA or WFULL import')
++     ENDIF
++
++     IF (WINT_ENABLED) THEN
++        IF (WINT_CUTOFF_MODE/=WINT_CUTOFF_WS.OR..NOT.LVPOT.OR.LWPOT.OR.LCRPA.OR..NOT.L2E4W_ALL) &
++           CALL vtutor%error('Explicit Wannier kernels require HFRCUT=-2 and native ALGO=2E4WA without imported W or cRPA')
++     ENDIF
++
+      NWLOW=-1
+      CALL PROCESS_INCAR(.FALSE., IO%IU0, IO%IU5, 'NWLOW', NWLOW, IERR, WRITEXMLINCAR)
+ 
+@@ -3548,8 +3889,13 @@
+                 ELSE
+                    OPEN(UNIT=99,FILE='VIJKL.'//EXTENSION,STATUS='REPLACE')
+                 ENDIF
++                CALL WINT_WRITE_MODEL_HEADER(99)
+                 WRITE( 99 ,'(A)')'# File generated by VASP contains Coulomb matrix elements'
++                IF (WINT_ENABLED) THEN
++                   WRITE(99,'(A)') '# Kernel operator: K(r,rprime); native VASP tensor-axis convention retained'
++                ELSE
+                 WRITE( 99 ,'(A)')'# V_ijkl = [ij|kl] = < ik|jl> = \int \phi*_i(r1) \phi_j(r1) \phi*_k(r2) \phi_l(r2) / |r1-r2|'
++                ENDIF
+                 WRITE( 99 ,'(A,F20.12)')'#  I   J   K   L          RE(V_IJKL)          IM(V_IJKL)'
+                 !print all matrix elements into VIJKL
+                 DO N4=1,NWTOT
+@@ -3567,7 +3913,9 @@
+                 WRITE(IO%IU6,*)
+                 WRITE(IO%IU6,'(" spin components:",2I3)') ISP1,ISP2
+                 ! Write WIJKL(I,I,J,J) to OUTCAR
+-                IF ( LUSEBLOCH ) THEN
++                IF (WINT_ENABLED) THEN
++                   WRITE(IO%IU6,'(/A)') ' Projected interaction V_iijj:'
++                ELSE IF ( LUSEBLOCH ) THEN
+                    WRITE(IO%IU6,'(/A)') ' bare Coulomb repulsion V_iijj:'
+                 ELSE IF ( LUSELOCPROJ ) THEN
+                    WRITE(IO%IU6,'(/A)') ' bare Coulomb repulsion V_iijj between LOCPROJs:'
+@@ -3587,7 +3935,9 @@
+                    WRITE(IO%IU6,*)
+                 ENDDO 
+                 ! Write WIJKL(I,J,J,I) to OUTCAR
+-                IF ( LUSEBLOCH ) THEN
++                IF (WINT_ENABLED) THEN
++                   WRITE(IO%IU6,'(/A)') ' Projected interaction V_ijji:'
++                ELSE IF ( LUSEBLOCH ) THEN
+                    WRITE(IO%IU6,'(/A)') ' bare Coulomb repulsion V_ijji:'
+                 ELSE IF ( LUSELOCPROJ ) THEN
+                    WRITE(IO%IU6,'(/A)') ' bare Coulomb repulsion V_ijji between LOCPROJs:'
+@@ -3607,7 +3957,9 @@
+                    WRITE(IO%IU6,*)
+                 ENDDO 
+                 ! Write WIJKL(I,J,I,J) to OUTCAR
+-                IF ( LUSEBLOCH ) THEN
++                IF (WINT_ENABLED) THEN
++                   WRITE(IO%IU6,'(/A)') ' Projected interaction V_ijij:'
++                ELSE IF ( LUSEBLOCH ) THEN
+                    WRITE(IO%IU6,'(/A)') ' bare Coulomb repulsion V_ijij:'
+                 ELSE IF ( LUSELOCPROJ ) THEN
+                    WRITE(IO%IU6,'(/A)') ' bare Coulomb repulsion V_ijij between LOCPROJs:'
+@@ -3628,7 +3980,11 @@
+                 ENDDO 
+ 
+                 ! Write Hubbard Kanamori parameter
++                IF (WINT_ENABLED) THEN
++                   WRITE(IO%IU6,'(/A)') ' Averaged projected interaction'
++                ELSE
+                 WRITE(IO%IU6,'(/A)') ' averaged bare interaction'
++                ENDIF
+                 CTMP1 = 0
+                 CTMP2 = 0
+                 CTMP3 = 0
+@@ -3645,11 +4001,27 @@
+                 IF ( NWTOTSUB > 1 ) THEN
+                    CTMP2 = CTMP2/REAL(NWTOTSUB*(NWTOTSUB-1),q)
+                    CTMP3 = CTMP3/REAL(NWTOTSUB*(NWTOTSUB-1),q) 
++                   IF (WINT_ENABLED) THEN
++                      WRITE(IO%IU6,'(" projected U =",2F10.4)')CTMP1
++                   ELSE
+                    WRITE(IO%IU6,'(" bare Hubbard U =",2F10.4)')CTMP1
++                   ENDIF
++                   IF (WINT_ENABLED) THEN
++                      WRITE(IO%IU6,'(" projected direct Uprime =",2F10.4)')CTMP2
++                   ELSE
+                    WRITE(IO%IU6,'(" bare Hubbard u =",2F10.4)')CTMP2
++                   ENDIF
++                   IF (WINT_ENABLED) THEN
++                      WRITE(IO%IU6,'(" projected Coulomb exchange J =",2F10.4)')CTMP3
++                   ELSE
+                    WRITE(IO%IU6,'(" bare Hubbard J =",2F10.4)')CTMP3
++                   ENDIF
+                 ELSE
++                   IF (WINT_ENABLED) THEN
++                      WRITE(IO%IU6,'(" projected U =",2F10.4)')CTMP1
++                   ELSE
+                    WRITE(IO%IU6,'(" bare Hubbard U =",2F10.4)')CTMP1
++                   ENDIF
+                 ENDIF 
+                 WRITE(IO%IU6,*)
+ 
+diff --git a/src/.objects b/src/.objects
+--- a/src/.objects
++++ b/src/.objects
+@@ -40,6 +40,8 @@
+ 	minimax_struct.o \
+ 	locproj_struct.o \
+ 	msdgw_struct.o \
++	ws_coulomb.o \
++	wint_layered.o \
+ 	fock_glb.o \
+ 	chi_glb.o \
+ 	smart_allocate.o \
+@@ -276,6 +278,7 @@
+ 	afqmc.o \
+ 	rpax.o \
+ 	chi.o \
++	wint_paw.o \
+ 	dmft.o \
+ 	GG_base.o \
+ 	acfdt_GG.o \
+diff --git a/src/ws_coulomb.F b/src/ws_coulomb.F
+new file mode 100644
+--- /dev/null
++++ b/src/ws_coulomb.F
+@@ -0,0 +1,850 @@
++! Numerical radial primitives for the external Yukawa MIC trial only.
++! ws_coulomb applies epsilon_r; its caller remains responsible for physical C.
++module yukawa_radial
++  use iso_fortran_env, only: real64
++  implicit none
++  private
++  public :: yukawa_long_range, yukawa_short_range_ft
++  integer, parameter :: dp=real64
++  real(dp), parameter :: pi=acos(-1.0_dp)
++contains
++  function erfcx_nonnegative(z) result(value)
++    ! Never evaluates exp(+z*z) where it could overflow.
++    real(dp), intent(in) :: z
++    real(dp) :: value,term,previous,total,next
++    integer :: n
++    if (z<=8.0_dp) then
++      value=exp(z*z)*erfc(z)
++    else
++      term=1; total=1
++      do n=1,100
++        previous=abs(term)
++        next=-term*(real(n,dp)-0.5_dp)/z/z
++        if (abs(next)>previous) exit
++        term=next; total=total+term
++        if (abs(term)<=epsilon(1.0_dp)*abs(total)) exit
++      enddo
++      value=total/sqrt(pi)/z
++    endif
++  end function
++
++  function scaled_moment(h,n) result(value)
++    ! Integral_0^1 u^(2*n) exp[-h^2(1/u^2-1)]du, for h>=8.
++    ! Watson expansion; terms are stopped before growth or at roundoff.
++    real(dp), intent(in) :: h
++    integer, intent(in) :: n
++    real(dp) :: value,total,term,next
++    integer :: j
++    total=1; term=1
++    do j=1,200
++      next=-term*(real(n+j,dp)+0.5_dp)/h/h
++      if (abs(next)>abs(term)) exit
++      term=next; total=total+term
++      if (abs(term)<=epsilon(1.0_dp)*abs(total)) exit
++    enddo
++    value=(0.5_dp/h/h)*total
++  end function
++
++  function negative_square_exponential(h,x) result(value)
++    real(dp), intent(in) :: h,x
++    real(dp) :: value
++    ! Every individual term is below the smallest representable subnormal
++    ! beyond this cutoff. Avoid squaring arbitrarily large finite values.
++    if (max(h,x)>sqrt(-log(tiny(1.0_dp))-log(epsilon(1.0_dp)))) then
++      value=0
++    else
++      value=exp(-h*h-x*x)
++    endif
++  end function
++
++  function yukawa_long_range(r,alpha,kappa) result(value)
++    real(dp), intent(in) :: r,alpha,kappa
++    real(dp) :: value,h,x,moment,total,power,first,second,prefactor
++    integer :: n
++    if (kappa==0.0_dp) then
++      if (r==0.0_dp) then
++        value=2*alpha/sqrt(pi)
++      else
++        value=erf(alpha*r)/r
++      endif
++      return
++    endif
++    h=kappa/(2*alpha); x=alpha*r
++    if (h>sqrt(huge(1.0_dp))) then
++      value=0; return
++    endif
++    if (x<=0.01_dp) then
++      ! Direct subtraction loses all digits as r tends to zero. Expand the
++      ! positive Gaussian integral in x^2; the omitted term is <=x^8/24
++      ! times its positive origin value (<=4.17e-18 in this branch).
++      if (h<8.0_dp) then
++        moment=1-sqrt(pi)*h*erfcx_nonnegative(h)
++      else
++        moment=scaled_moment(h,0)
++      endif
++      total=moment; power=1
++      do n=1,3
++        if (h<8.0_dp) then
++          moment=(1-2*h*h*moment)/real(2*n+1,dp)
++        else
++          moment=scaled_moment(h,n)
++        endif
++        power=-power*x*x/real(n,dp)
++        total=total+power*moment
++      enddo
++      prefactor=negative_square_exponential(h,0.0_dp)
++      value=(2*alpha/sqrt(pi))*prefactor*total
++    else if (h>=x) then
++      prefactor=negative_square_exponential(h,x)
++      value=prefactor*(erfcx_nonnegative(h-x)-erfcx_nonnegative(h+x))/(2*r)
++    else
++      ! h-x can be negative, so never call erfcx on that argument.
++      if (kappa>-log(tiny(1.0_dp)*epsilon(1.0_dp))/r) then
++        first=0
++      else
++        first=exp(-kappa*r)*erfc(h-x)
++      endif
++      second=negative_square_exponential(h,x)*erfcx_nonnegative(h+x)
++      value=(first-second)/(2*r)
++    endif
++  end function
++
++  function yukawa_short_range_ft(q2,alpha,kappa) result(value)
++    real(dp), intent(in) :: q2,alpha,kappa
++    real(dp) :: value,d,xroot,x
++    d=hypot(sqrt(q2),kappa)
++    xroot=d/(2*alpha)
++    if (xroot>sqrt(-log(tiny(1.0_dp)))) then
++      value=(4*pi/d)/d
++      return
++    endif
++    x=xroot*xroot
++    if (x<1.0e-5_dp) then
++      value=pi/alpha**2*(1-x/2+x*x/6-x*x*x/24)
++    else
++      value=(4*pi/d)/d*(1-exp(-x))
++    endif
++  end function
++end module
++
++! Standalone finite-WS numerical kernels; native callers supply density and PAW contractions.
++! Optional trailing kappa [Angstrom^-1], epsilon_r [dimensionless].
++! At kappa=0,epsilon_r=1 all baseline arithmetic is retained.
++! Yukawa MIC uses the identical BvK WS geometry, bare tail/grid guards.
++! Original standalone MIC construction following Sundararaman and Arias,
++! Phys. Rev. B 87, 165122 (2013), Appendix A.1. No VASP dependencies.
++!
++! A contains the BvK superlattice vectors as COLUMNS, in Angstrom.
++! q is Cartesian inverse Angstrom; ws_get returns
++! integral_WS exp(-iq.r)*exp(-kappa*r)/(epsilon_r*r) in Angstrom**2.
++! The physical Coulomb constant is applied by the caller.
++! Only reciprocal vectors of this superlattice are valid queries.
++!
++! tol controls the erfc range separation and smooth-part bandwidth. It is
++! NOT a uniform error bound on individual Fourier coefficients: periodic
++! WS-face derivative cusps produce quadrature errors. Converge head/edges
++! and density contractions independently with WS_NGRID. At and outside
++! the FFT Nyquist faces only the analytic short-range term is returned.
++!
++! The saved cache is process-local. Initialize/reset outside threaded query
++! regions; ws_get is read-only and safe for parallel queries after ws_init.
++module ws_coulomb
++  use yukawa_radial, only: yukawa_long_range, yukawa_short_range_ft
++  use iso_fortran_env, only: real64, int64
++  use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
++  implicit none
++  private
++  public :: ws_init, ws_get, ws_info, ws_reset, ws_init_pair, ws_get_pair, ws_get_screened
++  integer, parameter :: dp=real64
++  real(dp), parameter :: pi=acos(-1.0_dp)
++  integer(int64), parameter :: memory_limit=536870912_int64 ! 512 MiB per single-cache construction
++  integer(int64), parameter :: pair_memory_limit=1073741824_int64 ! 1 GiB combined pair construction peak
++  real(dp), save :: lattice(3,3)=0, saved_tol=0, alpha_saved=0, rin_saved=0, volume_saved=0
++  real(dp), save :: kappa_saved=0, epsilon_saved=1
++  integer, save :: shape_saved(3)=0, requested_grid(3)=0
++  integer(int64), save :: bytes_saved=0
++  logical, save :: ready=.false.
++  complex(dp), allocatable, save :: coefficients(:,:,:)
++  complex(dp), allocatable, save :: pair_coefficients(:,:,:)
++  logical, save :: pair_ready=.false.
++  real(dp), save :: pair_kappa=0, pair_epsilon=1
++  integer(int64), save :: pair_bytes=0
++contains
++
++  subroutine ws_reset()
++    if (allocated(coefficients)) deallocate(coefficients)
++    if (allocated(pair_coefficients)) deallocate(pair_coefficients)
++    pair_ready=.false.; pair_kappa=0; pair_epsilon=1; pair_bytes=0
++    ready=.false.
++    lattice=0; saved_tol=0; alpha_saved=0; rin_saved=0; volume_saved=0
++    shape_saved=0; requested_grid=0; bytes_saved=0
++    kappa_saved=0; epsilon_saved=1
++  end subroutine
++
++  subroutine ws_info(ngrid,alpha,rin,volume,bytes)
++    integer, intent(out) :: ngrid(3)
++    real(dp), intent(out) :: alpha,rin,volume
++    integer(int64), intent(out) :: bytes
++    ngrid=shape_saved; alpha=alpha_saved; rin=rin_saved; volume=volume_saved; bytes=bytes_saved+pair_bytes
++  end subroutine
++
++  subroutine ws_init(a_super,tol,grid_override,ierr,message,kappa,epsilon_r)
++    real(dp), intent(in) :: a_super(3,3),tol
++    real(dp), optional, intent(in) :: kappa,epsilon_r
++    real(dp) :: effective_kappa,effective_epsilon
++    integer, intent(in) :: grid_override(3)
++    integer, intent(out) :: ierr
++    character(len=*), intent(out) :: message
++    real(dp) :: inv(3,3),recip(3,3),reduced(3,3),qr(3,3),rr(3,3),alias(3,3)
++    real(dp) :: shortest,alias_short,alpha,rin,volume,bandwidth,point(3),d2,sample,needed
++    integer :: ng(3),i,j,k,axis,iteration,stat
++    integer(int64) :: count,memory
++    logical :: ok
++    complex(dp), allocatable :: line(:)
++
++    ierr=0; message=''
++    effective_kappa=0; effective_epsilon=1
++    if (present(kappa)) effective_kappa=kappa
++    if (present(epsilon_r)) effective_epsilon=epsilon_r
++    if (.not.ieee_is_finite(effective_kappa).or..not.ieee_is_finite(effective_epsilon)) then
++      call ws_reset()
++      ierr=2; message='WS Yukawa: nonfinite kappa or relative permittivity'; return
++    endif
++    if (effective_kappa<0.or.effective_epsilon<=0) then
++      call ws_reset()
++      ierr=2; message='WS Yukawa: require kappa >= 0 and relative permittivity > 0'; return
++    endif
++    if (ready) then
++      if (all(a_super==lattice).and.tol==saved_tol.and.all(grid_override==requested_grid).and. &
++          effective_kappa==kappa_saved.and.effective_epsilon==epsilon_saved) then
++        message='WS MIC cache reused; Fourier face and finite-density convergence still required'
++        return
++      endif
++    endif
++    call ws_reset()
++    if (.not.all(ieee_is_finite(a_super)).or..not.ieee_is_finite(tol)) then
++      ierr=2; message='WS: nonfinite lattice or tolerance'; return
++    endif
++    if (tol<1.0e-14_dp.or.tol>=0.1_dp.or.any(grid_override<0)) then
++      ierr=2; message='WS: require 1e-14 <= tol < 0.1 and nonnegative grid dimensions'; return
++    endif
++    call inverse3(a_super,inv,volume,ok)
++    if (.not.ok) then
++      ierr=3; message='WS: singular, nonfinite or numerically ill-conditioned lattice'; return
++    endif
++    call reduce_qr(a_super,reduced,qr,rr,ok)
++    if (.not.ok) then
++      ierr=3; message='WS: lattice reduction failed; extreme conditioning or integer transform'; return
++    endif
++    call shortest_vector(reduced,qr,rr,shortest,ok)
++    if (.not.ok) then
++      ierr=3; message='WS: shortest-vector enumeration could not be certified'; return
++    endif
++    rin=0.5_dp*shortest
++    alpha=sqrt(-log(tol))/rin
++    bandwidth=-2*log(tol)/rin
++    recip=2*pi*transpose(inv)
++    do axis=1,3
++      ! The physical smooth bandwidth must also fit ws_get's rectangular
++      ! coefficient-index box, including explicitly supplied skew grids.
++      needed=bandwidth*sqrt(sum(a_super(:,axis)**2))/pi
++      if (grid_override(axis)>0) then
++        ng(axis)=grid_override(axis)
++        if (.not.power_two(ng(axis))) then
++          ierr=4; message='WS: explicit grid dimensions must be powers of two'; return
++        endif
++        if (real(ng(axis),dp)<=needed) then
++          ierr=4; message='WS: explicit grid cannot contain the physical MIC bandwidth in its index box'; return
++        endif
++      else
++        if (needed>real(memory_limit/16,dp)) then
++          ierr=4; message='WS: automatic grid exceeds the 512 MiB memory cap'; return
++        endif
++        ng(axis)=8
++        do while (real(ng(axis),dp)<=needed)
++          ng(axis)=2*ng(axis)
++        enddo
++      endif
++    enddo
++    ok=.false.
++    do iteration=1,30
++      call grid_memory(ng,count,memory,ok)
++      if (.not.ok) then
++        ierr=4; message='WS: grid exceeds the 512 MiB per-process memory cap'; return
++      endif
++      do axis=1,3
++        alias(:,axis)=real(ng(axis),dp)*recip(:,axis)
++      enddo
++      call lattice_shortest(alias,alias_short,ok)
++      if (.not.ok) then
++        ierr=3; message='WS: reciprocal alias-lattice certification failed'; return
++      endif
++      if (alias_short/2>bandwidth*(1+1.0e-12_dp)) exit
++      if (all(grid_override>0)) then
++        ierr=4; message='WS: explicit grid fails the MIC Nyquist bandwidth requirement'; return
++      endif
++      do axis=1,3
++        if (grid_override(axis)==0) ng(axis)=2*ng(axis)
++      enddo
++    enddo
++    if (iteration>30) then
++      ierr=4; message='WS: automatic grid did not reach the MIC bandwidth'; return
++    endif
++    allocate(coefficients(ng(1),ng(2),ng(3)),line(maxval(ng)),stat=stat)
++    if (stat/=0) then
++      call ws_reset()
++      ierr=4; message='WS: allocation failed within declared memory cap'; return
++    endif
++    do k=0,ng(3)-1
++      do j=0,ng(2)-1
++        do i=0,ng(1)-1
++          point=a_super(:,1)*(real(i,dp)/ng(1))+a_super(:,2)*(real(j,dp)/ng(2)) &
++                +a_super(:,3)*(real(k,dp)/ng(3))
++          call closest_squared(point,reduced,qr,rr,d2,ok)
++          if (.not.ok) then
++            deallocate(line)
++            call ws_reset()
++            ierr=3; message='WS: exact minimum-image enumeration failed'; return
++          endif
++          if (effective_kappa>0) then
++            sample=yukawa_long_range(sqrt(d2),alpha,effective_kappa)
++          else if (d2<=tiny(1.0_dp)) then
++            sample=2*alpha/sqrt(pi)
++          else
++            sample=erf(alpha*sqrt(d2))/sqrt(d2)
++          endif
++          coefficients(i+1,j+1,k+1)=cmplx(sample,0.0_dp,dp)
++        enddo
++      enddo
++    enddo
++    do k=1,ng(3)
++      do j=1,ng(2)
++        call fft_line(coefficients(:,j,k))
++      enddo
++    enddo
++    do k=1,ng(3)
++      do i=1,ng(1)
++        line(:ng(2))=coefficients(i,:,k)
++        call fft_line(line(:ng(2)))
++        coefficients(i,:,k)=line(:ng(2))
++      enddo
++    enddo
++    do j=1,ng(2)
++      do i=1,ng(1)
++        line(:ng(3))=coefficients(i,j,:)
++        call fft_line(line(:ng(3)))
++        coefficients(i,j,:)=line(:ng(3))
++      enddo
++    enddo
++    coefficients=coefficients*(volume/real(count,dp))
++    deallocate(line)
++    lattice=a_super; saved_tol=tol; requested_grid=grid_override
++    kappa_saved=effective_kappa; epsilon_saved=effective_epsilon
++    shape_saved=ng; alpha_saved=alpha; rin_saved=rin; volume_saved=volume
++    bytes_saved=16_int64*count ! retained cache; peak additionally has a max(ng) complex work line
++    ready=.true.
++    message='WS MIC ready; tol controls smooth bandwidth; refine FFT for WS-face/coefficient convergence'
++  end subroutine
++
++  subroutine ws_get(qcart,value,ierr)
++    real(dp), intent(in) :: qcart(3)
++    real(dp), intent(out) :: value
++    integer, intent(out) :: ierr
++    real(dp) :: phase(3),q2,x,comm_tolerance
++    integer(int64) :: modes(3)
++    integer :: idx(3)
++    value=0; ierr=0
++    if (.not.ready) then
++      ierr=1; return
++    endif
++    if (.not.all(ieee_is_finite(qcart))) then
++      ierr=2; return
++    endif
++    phase=matmul(transpose(lattice),qcart)/(2*pi)
++    if (maxval(abs(phase))>1.0e12_dp.or..not.all(ieee_is_finite(phase))) then
++      ierr=5; return
++    endif
++    modes=nint(phase,kind=int64)
++    comm_tolerance=1.0e-7_dp+64*epsilon(1.0_dp)*maxval(abs(phase))
++    if (maxval(abs(phase-real(modes,dp)))>comm_tolerance) then
++      ierr=5; return
++    endif
++    q2=sum(qcart**2)
++    if (kappa_saved>0) then
++      value=yukawa_short_range_ft(q2,alpha_saved,kappa_saved)
++    else if (all(modes==0)) then
++      value=pi/alpha_saved**2
++    else
++      x=q2/(4*alpha_saved**2)
++      if (x<1.0e-5_dp) then
++        value=pi/alpha_saved**2*(1-x/2+x*x/6-x*x*x/24)
++      else
++        value=4*pi*(1-exp(-x))/q2
++      endif
++    endif
++    if (any(abs(modes)>=int(shape_saved/2,int64))) then
++      call apply_dielectric_scale(value,ierr)
++      return
++    endif
++    idx=int(modulo(modes,int(shape_saved,int64)))+1
++    value=value+real(coefficients(idx(1),idx(2),idx(3)),dp)
++    call apply_dielectric_scale(value,ierr)
++  end subroutine
++
++  ! Simultaneously cache the unscreened bare kernel and the Yukawa target.
++  ! The remainder is (target-bare)/epsilon, NOT target/epsilon-bare.
++  ! The paired remainder remains available for numerical references. Native
++  ! full-density model projections use ws_get_screened directly, avoiding
++  ! cancellation and any residual Coulomb baseline in the screened operator.
++  subroutine ws_init_pair(a_super,tol,grid_override,kappa,epsilon_r,ierr,message)
++    real(dp), intent(in) :: a_super(3,3),tol,kappa,epsilon_r
++    integer, intent(in) :: grid_override(3)
++    integer, intent(out) :: ierr
++    character(len=*), intent(out) :: message
++    real(dp) :: reduced(3,3),qr(3,3),rr(3,3),point(3),d2,sample
++    integer :: ng(3),i,j,k,stat
++    integer(int64) :: count,construction_bytes
++    logical :: ok
++    complex(dp), allocatable :: line(:)
++
++    ierr=0; message=''
++    if (.not.ieee_is_finite(kappa).or..not.ieee_is_finite(epsilon_r)) then
++      call ws_reset()
++      ierr=2; message='WS pair: nonfinite kappa or relative permittivity'; return
++    endif
++    if (kappa<0.or.epsilon_r<=0) then
++      call ws_reset()
++      ierr=2; message='WS pair: require kappa >= 0 and relative permittivity > 0'; return
++    endif
++    ! This call preserves the old bare arithmetic and single-cache cap.
++    ! A changed geometry/tolerance/grid clears both caches via ws_reset.
++    call ws_init(a_super,tol,grid_override,ierr,message)
++    if (ierr/=0) return
++    if (pair_ready.and.kappa==pair_kappa) then
++      pair_epsilon=epsilon_r
++      message='WS bare/target pair caches reused; no Fourier reconstruction'
++      return
++    endif
++    pair_ready=.false.; pair_bytes=0
++    if (allocated(pair_coefficients)) deallocate(pair_coefficients)
++    pair_kappa=kappa; pair_epsilon=epsilon_r
++    if (kappa==0) then
++      pair_ready=.true.
++      message='WS bare/target pair ready; exact zero remainder; one cache retained'
++      return
++    endif
++    ng=shape_saved
++    count=product(int(ng,int64))
++    construction_bytes=bytes_saved+16_int64*(count+int(maxval(ng),int64))
++    if (construction_bytes>pair_memory_limit) then
++      call ws_reset()
++      ierr=4; message='WS pair exceeds the 1 GiB combined per-process construction memory cap'; return
++    endif
++    call reduce_qr(a_super,reduced,qr,rr,ok)
++    if (.not.ok) then
++      call ws_reset()
++      ierr=3; message='WS pair lattice reduction failed'; return
++    endif
++    allocate(pair_coefficients(ng(1),ng(2),ng(3)),line(maxval(ng)),stat=stat)
++    if (stat/=0) then
++      call ws_reset()
++      ierr=4; message='WS pair allocation failed within declared combined memory cap'; return
++    endif
++    do k=0,ng(3)-1
++      do j=0,ng(2)-1
++        do i=0,ng(1)-1
++          point=a_super(:,1)*(real(i,dp)/ng(1))+a_super(:,2)*(real(j,dp)/ng(2)) &
++                +a_super(:,3)*(real(k,dp)/ng(3))
++          call closest_squared(point,reduced,qr,rr,d2,ok)
++          if (.not.ok) then
++            deallocate(line)
++            call ws_reset()
++            ierr=3; message='WS pair minimum-image enumeration failed'; return
++          endif
++          sample=yukawa_long_range(sqrt(d2),alpha_saved,kappa)
++          pair_coefficients(i+1,j+1,k+1)=cmplx(sample,0.0_dp,dp)
++        enddo
++      enddo
++    enddo
++    do k=1,ng(3)
++      do j=1,ng(2)
++        call fft_line(pair_coefficients(:,j,k))
++      enddo
++    enddo
++    do k=1,ng(3)
++      do i=1,ng(1)
++        line(:ng(2))=pair_coefficients(i,:,k)
++        call fft_line(line(:ng(2)))
++        pair_coefficients(i,:,k)=line(:ng(2))
++      enddo
++    enddo
++    do j=1,ng(2)
++      do i=1,ng(1)
++        line(:ng(3))=pair_coefficients(i,j,:)
++        call fft_line(line(:ng(3)))
++        pair_coefficients(i,j,:)=line(:ng(3))
++      enddo
++    enddo
++    pair_coefficients=pair_coefficients*(volume_saved/real(count,dp))
++    deallocate(line)
++    pair_bytes=16_int64*count
++    pair_ready=.true.
++    message='WS bare/target pair ready; combined construction peak <= 1 GiB per process'
++  end subroutine ws_init_pair
++
++  subroutine ws_get_pair(qcart,bare,remainder,ierr)
++    real(dp), intent(in) :: qcart(3)
++    real(dp), intent(out) :: bare,remainder
++    integer, intent(out) :: ierr
++    real(dp) :: phase(3),q2,target
++    integer(int64) :: modes(3)
++    integer :: idx(3)
++
++    bare=0; remainder=0; ierr=0
++    if (.not.pair_ready) then
++      ierr=1; return
++    endif
++    ! ws_get checks readiness, finite and commensurate q before any indexing.
++    call ws_get(qcart,bare,ierr)
++    if (ierr/=0) return
++    if (pair_kappa==0) return
++    phase=matmul(transpose(lattice),qcart)/(2*pi)
++    modes=nint(phase,kind=int64)
++    q2=sum(qcart**2)
++    target=yukawa_short_range_ft(q2,alpha_saved,pair_kappa)
++    if (.not.any(abs(modes)>=int(shape_saved/2,int64))) then
++      idx=int(modulo(modes,int(shape_saved,int64)))+1
++      target=target+real(pair_coefficients(idx(1),idx(2),idx(3)),dp)
++    endif
++    remainder=target-bare
++    if (pair_epsilon/=1.0_dp) then
++      if (pair_epsilon<1.0_dp) then
++        if (abs(remainder)>huge(1.0_dp)*pair_epsilon) then
++          remainder=0; ierr=6; return
++        endif
++      endif
++      remainder=remainder/pair_epsilon
++    endif
++    if (.not.ieee_is_finite(remainder)) then
++      remainder=0; ierr=6
++    endif
++  end subroutine ws_get_pair
++
++  ! Direct target getter for a full-density projection. In particular a
++  ! strongly screened value must never be reconstructed by adding a large
++  ! bare coefficient to its almost equal and opposite remainder.
++  subroutine ws_get_screened(qcart,target,ierr)
++    real(dp), intent(in) :: qcart(3)
++    real(dp), intent(out) :: target
++    integer, intent(out) :: ierr
++    real(dp) :: phase(3),q2,comm_tolerance
++    integer(int64) :: modes(3)
++    integer :: idx(3)
++
++    target=0; ierr=0
++    if (.not.pair_ready) then
++      ierr=1; return
++    endif
++    if (pair_kappa==0) then
++      call ws_get(qcart,target,ierr)
++      if (ierr/=0) return
++    else
++      if (.not.all(ieee_is_finite(qcart))) then
++        ierr=2; return
++      endif
++      phase=matmul(transpose(lattice),qcart)/(2*pi)
++      if (maxval(abs(phase))>1.0e12_dp.or..not.all(ieee_is_finite(phase))) then
++        ierr=5; return
++      endif
++      modes=nint(phase,kind=int64)
++      comm_tolerance=1.0e-7_dp+64*epsilon(1.0_dp)*maxval(abs(phase))
++      if (maxval(abs(phase-real(modes,dp)))>comm_tolerance) then
++        ierr=5; return
++      endif
++      q2=sum(qcart**2)
++      ! The direct API does not support amplifying an already subnormal SR
++      ! coefficient: its lost mantissa cannot be recovered by epsilon<1.
++      ! For this machine-derived range, reject BEFORE the two divisions in
++      ! the unscaled SR transform. No material-dependent kappa cutoff is used.
++      ! ierr=7 denotes this unsupported finite-precision rescaling range.
++      if (pair_epsilon<1.0_dp) then
++        if (hypot(sqrt(q2),pair_kappa)>sqrt(4*pi)/sqrt(tiny(1.0_dp))) then
++          ierr=7; return
++        endif
++      endif
++      target=yukawa_short_range_ft(q2,alpha_saved,pair_kappa)
++      if (.not.any(abs(modes)>=int(shape_saved/2,int64))) then
++        idx=int(modulo(modes,int(shape_saved,int64)))+1
++        target=target+real(pair_coefficients(idx(1),idx(2),idx(3)),dp)
++      endif
++    endif
++    if (pair_epsilon/=1.0_dp) then
++      if (pair_epsilon<1.0_dp) then
++        if (abs(target)>huge(1.0_dp)*pair_epsilon) then
++          target=0; ierr=6; return
++        endif
++      endif
++      target=target/pair_epsilon
++    endif
++    if (.not.ieee_is_finite(target)) then
++      target=0; ierr=6
++    endif
++  end subroutine ws_get_screened
++
++  subroutine apply_dielectric_scale(value,ierr)
++    real(dp), intent(inout) :: value
++    integer, intent(out) :: ierr
++    ierr=0
++    if (epsilon_saved/=1.0_dp) then
++      ! A valid finite positive epsilon can still yield an unrepresentable
++      ! coefficient. Detect that before division, including the SR-only path.
++      if (epsilon_saved<1.0_dp) then
++        if (abs(value)>huge(1.0_dp)*epsilon_saved) then
++          value=0; ierr=6; return
++        endif
++      endif
++      value=value/epsilon_saved
++    endif
++    if (.not.ieee_is_finite(value)) then
++      value=0; ierr=6
++    endif
++  end subroutine
++
++  logical function power_two(n)
++    integer, intent(in) :: n
++    power_two=.false.
++    if (n<2) return
++    power_two=iand(n,n-1)==0
++  end function
++
++  subroutine grid_memory(ng,count,bytes,ok)
++    integer, intent(in) :: ng(3)
++    integer(int64), intent(out) :: count,bytes
++    logical, intent(out) :: ok
++    integer :: i
++    count=1; bytes=0; ok=.false.
++    do i=1,3
++      if (ng(i)<2) return
++      if (count>memory_limit/(16_int64*int(ng(i),int64))) return
++      count=count*int(ng(i),int64)
++    enddo
++    bytes=16_int64*(count+int(maxval(ng),int64))
++    ok=bytes<=memory_limit
++  end subroutine
++
++  subroutine inverse3(a,inv,volume,ok)
++    real(dp), intent(in) :: a(3,3)
++    real(dp), intent(out) :: inv(3,3),volume
++    logical, intent(out) :: ok
++    real(dp) :: det,scale
++    inv(1,:)=cross(a(:,2),a(:,3))
++    inv(2,:)=cross(a(:,3),a(:,1))
++    inv(3,:)=cross(a(:,1),a(:,2))
++    det=dot_product(a(:,1),inv(1,:)); volume=abs(det)
++    scale=sqrt(sum(a(:,1)**2)*sum(a(:,2)**2)*sum(a(:,3)**2))
++    ok=ieee_is_finite(volume).and.ieee_is_finite(scale).and.scale>tiny(1.0_dp)
++    if (.not.ok) return
++    ok=volume>1.0e-14_dp*scale
++    if (.not.ok) return
++    inv=inv/det
++    ok=all(ieee_is_finite(inv)).and.sqrt(sum(a*a)*sum(inv*inv))<1.0e10_dp
++  end subroutine
++
++  function cross(a,b) result(c)
++    real(dp), intent(in) :: a(3),b(3)
++    real(dp) :: c(3)
++    c=[a(2)*b(3)-a(3)*b(2),a(3)*b(1)-a(1)*b(3),a(1)*b(2)-a(2)*b(1)]
++  end function
++
++  subroutine orthogonalize(b,star,mu,norm2,ok)
++    real(dp), intent(in) :: b(3,3)
++    real(dp), intent(out) :: star(3,3),mu(3,3),norm2(3)
++    logical, intent(out) :: ok
++    integer :: i,j
++    star=0; mu=0; norm2=0; ok=.false.
++    do i=1,3
++      star(:,i)=b(:,i)
++      do j=1,i-1
++        mu(i,j)=dot_product(b(:,i),star(:,j))/norm2(j)
++        star(:,i)=star(:,i)-mu(i,j)*star(:,j)
++      enddo
++      norm2(i)=sum(star(:,i)**2)
++      if (.not.ieee_is_finite(norm2(i)).or.norm2(i)<=tiny(1.0_dp)) return
++    enddo
++    ok=.true.
++  end subroutine
++
++  subroutine reduce_qr(a,b,q,r,ok)
++    ! LLL with explicit integral unimodular column operations, followed by QR.
++    real(dp), intent(in) :: a(3,3)
++    real(dp), intent(out) :: b(3,3),q(3,3),r(3,3)
++    logical, intent(out) :: ok
++    real(dp) :: star(3,3),mu(3,3),norm2(3)
++    integer(int64) :: transform(3,3),column(3),m
++    integer :: k,j,iteration
++    transform=0
++    do k=1,3
++      transform(k,k)=1
++    enddo
++    b=a; k=2; iteration=0
++    do while (k<=3)
++      iteration=iteration+1
++      if (iteration>1000) then
++        ok=.false.; return
++      endif
++      call orthogonalize(b,star,mu,norm2,ok)
++      if (.not.ok) return
++      do j=k-1,1,-1
++        if (abs(mu(k,j))>1.0e8_dp) then
++          ok=.false.; return
++        endif
++        m=nint(mu(k,j),kind=int64)
++        if (m==0) cycle
++        column=transform(:,k)-m*transform(:,j)
++        if (maxval(abs(column))>100000000_int64) then
++          ok=.false.; return
++        endif
++        transform(:,k)=column
++        b=matmul(a,real(transform,dp))
++        call orthogonalize(b,star,mu,norm2,ok)
++        if (.not.ok) return
++      enddo
++      if (norm2(k)>=(0.75_dp-mu(k,k-1)**2)*norm2(k-1)) then
++        k=k+1
++      else
++        column=transform(:,k); transform(:,k)=transform(:,k-1); transform(:,k-1)=column
++        b=matmul(a,real(transform,dp)); k=max(2,k-1)
++      endif
++    enddo
++    call orthogonalize(b,star,mu,norm2,ok)
++    if (.not.ok) return
++    do k=1,3
++      q(:,k)=star(:,k)/sqrt(norm2(k))
++    enddo
++    r=matmul(transpose(q),b)
++    r(2,1)=0; r(3,1)=0; r(3,2)=0
++    ok=all(ieee_is_finite(r)).and.maxval(abs(matmul(transpose(q),q)-identity3()))<1.0e-8_dp
++  end subroutine
++
++  function identity3() result(a)
++    real(dp) :: a(3,3)
++    integer :: i
++    a=0
++    do i=1,3
++      a(i,i)=1
++    enddo
++  end function
++
++  subroutine lattice_shortest(a,length,ok)
++    real(dp), intent(in) :: a(3,3)
++    real(dp), intent(out) :: length
++    logical, intent(out) :: ok
++    real(dp) :: b(3,3),q(3,3),r(3,3)
++    call reduce_qr(a,b,q,r,ok)
++    if (ok) call shortest_vector(b,q,r,length,ok)
++  end subroutine
++
++  subroutine shortest_vector(b,q,r,length,ok)
++    real(dp), intent(in) :: b(3,3),q(3,3),r(3,3)
++    real(dp), intent(out) :: length
++    logical, intent(out) :: ok
++    real(dp) :: best,zero(3)
++    integer(int64) :: n(3)
++    best=minval(sum(b*b,dim=1)); zero=0; n=0
++    call sphere_search(r,zero,best,n,.true.,ok)
++    length=sqrt(best)
++  end subroutine
++
++  subroutine closest_squared(point,b,q,r,d2,ok)
++    real(dp), intent(in) :: point(3),b(3,3),q(3,3),r(3,3)
++    real(dp), intent(out) :: d2
++    logical, intent(out) :: ok
++    real(dp) :: y(3),residual(3)
++    integer(int64) :: n(3)
++    integer :: k
++    y=matmul(transpose(q),point); n=0
++    do k=3,1,-1
++      n(k)=nint((y(k)-dot_product(r(k,:),real(n,dp)))/r(k,k),kind=int64)
++    enddo
++    residual=point-matmul(b,real(n,dp)); d2=sum(residual**2)
++    call sphere_search(r,y,d2,n,.false.,ok)
++  end subroutine
++
++  subroutine sphere_search(r,y,best,n,exclude_zero,ok)
++    ! Complete QR sphere enumeration. Bounds are padded for floating roundoff;
++    ! no predetermined neighbour shell or component-wise image wrapping.
++    real(dp), intent(in) :: r(3,3),y(3)
++    real(dp), intent(inout) :: best
++    integer(int64), intent(inout) :: n(3)
++    logical, intent(in) :: exclude_zero
++    logical, intent(out) :: ok
++    integer :: visited
++    visited=0; ok=.true.
++    call visit(3,0.0_dp)
++  contains
++    recursive subroutine visit(level,partial)
++      integer, intent(in) :: level
++      real(dp), intent(in) :: partial
++      real(dp) :: center,radius,remaining,term,padding,safety
++      integer(int64) :: lo,hi,j
++      if (.not.ok) return
++      visited=visited+1
++      if (visited>1000000) then
++        ok=.false.; return
++      endif
++      if (level==0) then
++        if (exclude_zero.and.all(n==0)) return
++        best=min(best,partial)
++        return
++      endif
++      safety=256*epsilon(1.0_dp)*max(best,sum(y*y),sum(r*r),tiny(1.0_dp))
++      remaining=best-partial+safety
++      if (remaining<0) return
++      center=(y(level)-dot_product(r(level,level+1:3),real(n(level+1:3),dp)))/r(level,level)
++      radius=sqrt(max(0.0_dp,remaining))/abs(r(level,level))
++      padding=128*epsilon(1.0_dp)*max(1.0_dp,abs(center),radius)
++      if (abs(center)+radius>1.0e12_dp) then
++        ok=.false.; return
++      endif
++      lo=ceiling(center-radius-padding,kind=int64)
++      hi=floor(center+radius+padding,kind=int64)
++      do j=lo,hi
++        n(level)=j
++        term=r(level,level)*(real(j,dp)-center)
++        call visit(level-1,partial+term*term)
++      enddo
++    end subroutine
++  end subroutine
++
++  subroutine fft_line(data)
++    complex(dp), intent(inout) :: data(:)
++    complex(dp) :: temp,w,step
++    integer :: n,i,j,bit,width,start,k
++    n=size(data); j=0
++    do i=0,n-1
++      if (i<j) then
++        temp=data(i+1); data(i+1)=data(j+1); data(j+1)=temp
++      endif
++      bit=n/2
++      do while (bit>0)
++        if (iand(j,bit)==0) exit
++        j=ieor(j,bit); bit=bit/2
++      enddo
++      j=ieor(j,bit)
++    enddo
++    width=2
++    do while (width<=n)
++      step=cmplx(cos(-2*pi/width),sin(-2*pi/width),dp)
++      do start=1,n,width
++        w=cmplx(1.0_dp,0.0_dp,dp)
++        do k=0,width/2-1
++          temp=w*data(start+k+width/2)
++          data(start+k+width/2)=data(start+k)-temp
++          data(start+k)=data(start+k)+temp
++          w=w*step
++        enddo
++      enddo
++      width=2*width
++    enddo
++  end subroutine
++end module
+diff --git a/src/wint_paw.F b/src/wint_paw.F
+new file mode 100644
+--- /dev/null
++++ b/src/wint_paw.F
+@@ -0,0 +1,840 @@
++#include "symbol.inc"
++! Original bounded-workspace raw PAW density adapter; external native trial.
++MODULE wint_paw
++ USE prec
++ USE wave, ONLY:wavedes1,wavefun1
++ USE pseudo, ONLY:potcar
++ USE poscar, ONLY:type_info
++ USE lattice, ONLY:latt
++ USE asa, ONLY:SETYLM,YLM3LOOKUP,LMAXCG,INDCG,JS,YLM3
++ USE iso_fortran_env, ONLY:int64
++ USE,INTRINSIC::ieee_arithmetic,ONLY:ieee_is_finite
++ IMPLICIT NONE
++ PRIVATE
++ PUBLIC::wint_paw_context,wint_paw_accumulator,wint_paw_prepare,wint_paw_reset,wint_paw_info
++ PUBLIC::wint_paw_begin_accumulator,wint_paw_accumulate_batch,wint_paw_add_accumulated
++ PUBLIC::wint_paw_reset_accumulator,wint_paw_add_density,wint_paw_memory_info
++ INTERFACE
++  SUBROUTINE MRG_PROJ(wd,global_proj,local_proj)
++   USE prec
++   USE wave,ONLY:wavedes1
++   TYPE(wavedes1)::wd
++   GDEF::global_proj(wd%NPRO_TOT),local_proj(wd%NPRO)
++  END SUBROUTINE
++ END INTERFACE
++ REAL(q),PARAMETER::PI_W=ACOS(-1._q),TRUNC_TOL=1.e-15_q
++ INTEGER,PARAMETER::MAX_DEGREE=512,MAX_GBLOCK=2048,MAX_ATOMBLOCK=128
++ INTEGER(int64),PARAMETER::MEMORY_LIMIT=536870912_int64,PLAN_RESERVE=16777216_int64
++ INTEGER(int64),SAVE::resident=0,highwater=PLAN_RESERVE,next_generation=0
++ TYPE paw_species
++  INTEGER::nlm=0,ne=0,nrad=0,natom=0,degree=0,lmax=0
++  INTEGER,ALLOCATABLE::ell(:),lm(:),rad(:),rc1(:),rc2(:),rell(:),atoms(:)
++  COMPLEX(q),ALLOCATABLE::cg(:,:)
++  REAL(q),ALLOCATABLE::cheb(:,:),head(:),bound(:)
++  REAL(q)::check_error=0
++ END TYPE
++ TYPE accumulator_species
++  COMPLEX(q),ALLOCATABLE::coef(:,:,:)
++ END TYPE
++ TYPE wint_paw_context
++  PRIVATE
++  LOGICAL::ready=.false.
++  INTEGER::ng=0,nions=0,stride=0,lmax=0,maxne=0,maxrad=0,maxatom=0,maxnlm=0
++  INTEGER(int64)::bytes=0,generation=0
++  REAL(q)::qfrac(3)=0,b(3,3)=0,nfft=0,qmax=0
++  INTEGER,ALLOCATABLE::ityp(:),offset(:),atomslot(:),gvec(:,:)
++  REAL(q),ALLOCATABLE::pos(:,:)
++  TYPE(paw_species),ALLOCATABLE::species(:)
++ CONTAINS
++  FINAL::final_context
++ END TYPE
++ TYPE wint_paw_accumulator
++  PRIVATE
++  LOGICAL::ready=.false.
++  INTEGER::npairs=0,n1=0,n4=0,batches=0
++  INTEGER(int64)::bytes=0,generation=0
++  TYPE(accumulator_species),ALLOCATABLE::species(:)
++ CONTAINS
++  FINAL::final_accumulator
++ END TYPE
++CONTAINS
++ LOGICAL FUNCTION hold_bytes(n)
++  INTEGER(int64),INTENT(IN)::n
++  hold_bytes=.false.
++  IF(n<0.OR.n>MEMORY_LIMIT-PLAN_RESERVE)RETURN
++  IF(resident>MEMORY_LIMIT-PLAN_RESERVE-n)RETURN
++  resident=resident+n;highwater=MAX(highwater,resident+PLAN_RESERVE);hold_bytes=.true.
++ END FUNCTION
++ SUBROUTINE release_bytes(n)
++  INTEGER(int64),INTENT(IN)::n
++  IF(n<0.OR.n>resident)THEN
++   CALL M_stop('WINT PAW workspace ownership ledger violated')
++   RETURN
++  ENDIF
++  resident=resident-n
++ END SUBROUTINE
++ SUBROUTINE wint_paw_memory_info(current,peak,limit)
++  INTEGER(int64),INTENT(OUT)::current,peak,limit
++  current=resident+PLAN_RESERVE;peak=highwater;limit=MEMORY_LIMIT
++ END SUBROUTINE
++ SUBROUTINE wint_paw_reset(ctx)
++  TYPE(wint_paw_context),INTENT(INOUT)::ctx
++  IF(ALLOCATED(ctx%species))DEALLOCATE(ctx%species)
++  IF(ALLOCATED(ctx%ityp))DEALLOCATE(ctx%ityp)
++  IF(ALLOCATED(ctx%offset))DEALLOCATE(ctx%offset)
++  IF(ALLOCATED(ctx%atomslot))DEALLOCATE(ctx%atomslot)
++  IF(ALLOCATED(ctx%pos))DEALLOCATE(ctx%pos)
++  IF(ALLOCATED(ctx%gvec))DEALLOCATE(ctx%gvec)
++  CALL release_bytes(ctx%bytes)
++  ctx%bytes=0;ctx%ready=.false.;ctx%generation=0;ctx%ng=0;ctx%stride=0;ctx%nions=0
++  ctx%nfft=0;ctx%qmax=0;ctx%lmax=0;ctx%maxne=0;ctx%maxrad=0;ctx%maxatom=0;ctx%maxnlm=0
++ END SUBROUTINE
++ SUBROUTINE final_context(ctx)
++  TYPE(wint_paw_context),INTENT(INOUT)::ctx
++  CALL wint_paw_reset(ctx)
++ END SUBROUTINE
++ SUBROUTINE wint_paw_reset_accumulator(acc)
++  TYPE(wint_paw_accumulator),INTENT(INOUT)::acc
++  IF(ALLOCATED(acc%species))DEALLOCATE(acc%species)
++  CALL release_bytes(acc%bytes)
++  acc%bytes=0;acc%ready=.false.;acc%generation=0;acc%npairs=0;acc%n1=0;acc%n4=0;acc%batches=0
++ END SUBROUTINE
++ SUBROUTINE final_accumulator(acc)
++  TYPE(wint_paw_accumulator),INTENT(INOUT)::acc
++  CALL wint_paw_reset_accumulator(acc)
++ END SUBROUTINE
++ SUBROUTINE wint_paw_info(ctx,ng,nunique,bytes,nfft,degree,truncation_bound,check_error)
++  TYPE(wint_paw_context),INTENT(IN)::ctx
++  INTEGER,INTENT(OUT)::ng,nunique
++  INTEGER(int64),INTENT(OUT)::bytes
++  REAL(q),INTENT(OUT)::nfft
++  INTEGER,OPTIONAL,INTENT(OUT)::degree
++  REAL(q),OPTIONAL,INTENT(OUT)::truncation_bound,check_error
++  INTEGER::nt,deg
++  REAL(q)::bound,err
++  ng=ctx%ng;nunique=-1;bytes=ctx%bytes;nfft=ctx%nfft;deg=0;bound=0;err=0
++  IF(ALLOCATED(ctx%species))THEN
++   DO nt=1,SIZE(ctx%species)
++    deg=MAX(deg,ctx%species(nt)%degree);err=MAX(err,ctx%species(nt)%check_error)
++    IF(ALLOCATED(ctx%species(nt)%bound))bound=MAX(bound,MAXVAL(ctx%species(nt)%bound))
++   ENDDO
++  ENDIF
++  IF(PRESENT(degree))degree=deg
++  IF(PRESENT(truncation_bound))truncation_bound=bound
++  IF(PRESENT(check_error))check_error=err
++ END SUBROUTINE
++ SUBROUTINE wint_paw_prepare(ctx,wgwq,p,t_info,latt_cur,ierr,message,nfft)
++  TYPE(wint_paw_context),INTENT(INOUT)::ctx
++  TYPE(wavedes1),INTENT(IN)::wgwq
++  TYPE(potcar),INTENT(IN)::p(:)
++  TYPE(type_info),INTENT(IN)::t_info
++  TYPE(latt),INTENT(IN)::latt_cur
++  INTEGER,INTENT(OUT)::ierr
++  CHARACTER(*),INTENT(OUT)::message
++  INTEGER,OPTIONAL,INTENT(IN)::nfft
++  INTEGER::ng,nt,ni,ig,stat,slot
++  REAL(q)::cart(3)
++  INTEGER(int64)::bytes
++  ierr=0;message='';CALL wint_paw_reset(ctx)
++#ifdef gammareal
++  ierr=1;message='WINT PAW: gamma-real build unsupported';RETURN
++#endif
++  IF(.NOT.ASSOCIATED(wgwq%GRID).OR..NOT.ASSOCIATED(wgwq%VKPT))THEN
++   ierr=1;message='WINT PAW: missing response grid/q';RETURN
++  ENDIF
++  IF(wgwq%LGAMMA.OR.wgwq%LUSEINV.OR.wgwq%LSPIRAL)THEN
++   ierr=1;message='WINT PAW: require full complex unreduced response; no spiral';RETURN
++  ENDIF
++  ng=wgwq%NGVECTOR
++  IF(ng<0.OR.wgwq%GRID%NPLWV<=0.OR.SIZE(wgwq%VKPT)<3)THEN
++   ierr=1;message='WINT PAW: invalid response dimensions';RETURN
++  ENDIF
++  IF(.NOT.ASSOCIATED(wgwq%IGX).OR..NOT.ASSOCIATED(wgwq%IGY).OR..NOT.ASSOCIATED(wgwq%IGZ))THEN
++   ierr=1;message='WINT PAW: missing G indices';RETURN
++  ENDIF
++  IF(MIN(SIZE(wgwq%IGX),SIZE(wgwq%IGY),SIZE(wgwq%IGZ))<ng)THEN
++   ierr=1;message='WINT PAW: short G indices';RETURN
++  ENDIF
++  IF(.NOT.ALL(ieee_is_finite(wgwq%VKPT(:3))).OR..NOT.ALL(ieee_is_finite(latt_cur%B)))THEN
++   ierr=1;message='WINT PAW: nonfinite reciprocal geometry';RETURN
++  ENDIF
++  IF(t_info%NTYP<1.OR.SIZE(p)<t_info%NTYP.OR.t_info%NIONS<0)THEN
++   ierr=1;message='WINT PAW: invalid atom/species dimensions';RETURN
++  ENDIF
++  IF(.NOT.ASSOCIATED(t_info%ITYP).OR..NOT.ASSOCIATED(t_info%POSION).OR..NOT.ASSOCIATED(t_info%VCA))THEN
++   ierr=1;message='WINT PAW: missing atom/type/VCA descriptors';RETURN
++  ENDIF
++  IF(SIZE(t_info%ITYP)<t_info%NIONS.OR.SIZE(t_info%POSION,1)/=3.OR.SIZE(t_info%POSION,2)<t_info%NIONS)THEN
++   ierr=1;message='WINT PAW: inconsistent atom descriptors';RETURN
++  ENDIF
++  IF(SIZE(t_info%VCA)<t_info%NTYP)THEN
++   ierr=1;message='WINT PAW: short VCA descriptor';RETURN
++  ENDIF
++  IF(ANY(t_info%VCA(:t_info%NTYP)/=1._q))THEN
++   ierr=1;message='WINT PAW: VCA weights other than one unsupported';RETURN
++  ENDIF
++  IF(ANY(t_info%ITYP(:t_info%NIONS)<1).OR.ANY(t_info%ITYP(:t_info%NIONS)>t_info%NTYP).OR. &
++       .NOT.ALL(ieee_is_finite(t_info%POSION(:,:t_info%NIONS))))THEN
++   ierr=1;message='WINT PAW: invalid atom types/positions';RETURN
++  ENDIF
++  ctx%ng=ng;ctx%nions=t_info%NIONS;ctx%qfrac=wgwq%VKPT(:3);ctx%b=latt_cur%B;ctx%nfft=REAL(wgwq%GRID%NPLWV,q)
++  IF(PRESENT(nfft))THEN
++   IF(nfft<=0)THEN
++    ierr=1;message='WINT PAW: density NFFT must be positive';RETURN
++   ENDIF
++   ctx%nfft=REAL(nfft,q)
++  ENDIF
++  bytes=12_int64*ng+40_int64*ctx%nions+4096_int64*(t_info%NTYP+1)
++  IF(.NOT.hold_bytes(bytes))THEN
++   ierr=2;message='WINT PAW: context exceeds total 512MiB workspace limit';RETURN
++  ENDIF
++  ctx%bytes=bytes
++  ALLOCATE(ctx%species(t_info%NTYP),ctx%ityp(ctx%nions),ctx%offset(ctx%nions),ctx%atomslot(ctx%nions), &
++       ctx%pos(3,ctx%nions),ctx%gvec(3,ng),STAT=stat)
++  IF(stat/=0)THEN
++   ierr=2;message='WINT PAW: context allocation failed';CALL wint_paw_reset(ctx);RETURN
++  ENDIF
++  ctx%ityp=t_info%ITYP(:ctx%nions);ctx%pos=t_info%POSION(:,:ctx%nions);ctx%stride=0;ctx%qmax=0
++  ctx%lmax=0;ctx%maxne=0;ctx%maxrad=0;ctx%maxatom=0;ctx%maxnlm=0
++  DO ig=1,ng
++   ctx%gvec(:,ig)=[wgwq%IGX(ig),wgwq%IGY(ig),wgwq%IGZ(ig)]
++   cart=2*PI_W*MATMUL(ctx%b,REAL(ctx%gvec(:,ig),q)+ctx%qfrac)
++   IF(.NOT.ALL(ieee_is_finite(cart)).OR..NOT.ieee_is_finite(SUM(cart*cart)))THEN
++    ierr=1;message='WINT PAW: reciprocal norm overflow';EXIT
++   ENDIF
++   ctx%qmax=MAX(ctx%qmax,SQRT(SUM(cart*cart)))
++  ENDDO
++  IF(ierr==0)THEN
++   DO nt=1,t_info%NTYP
++    ctx%species(nt)%natom=COUNT(ctx%ityp==nt)
++    ALLOCATE(ctx%species(nt)%atoms(ctx%species(nt)%natom),STAT=stat)
++    IF(stat/=0)THEN
++     ierr=2;message='WINT PAW: atom-map allocation failed';EXIT
++    ENDIF
++    slot=0
++    DO ni=1,ctx%nions
++     IF(ctx%ityp(ni)==nt)THEN
++      slot=slot+1;ctx%species(nt)%atoms(slot)=ni;ctx%atomslot(ni)=slot
++     ENDIF
++    ENDDO
++    CALL build_species(ctx%species(nt),p(nt),ctx%qmax,bytes,ierr,message)
++    IF(ierr/=0)EXIT
++    ctx%bytes=ctx%bytes+bytes
++    ctx%lmax=MAX(ctx%lmax,ctx%species(nt)%lmax);ctx%maxne=MAX(ctx%maxne,ctx%species(nt)%ne)
++    ctx%maxrad=MAX(ctx%maxrad,ctx%species(nt)%nrad);ctx%maxatom=MAX(ctx%maxatom,ctx%species(nt)%natom)
++    ctx%maxnlm=MAX(ctx%maxnlm,ctx%species(nt)%nlm)
++   ENDDO
++  ENDIF
++  IF(ierr/=0)THEN
++   CALL wint_paw_reset(ctx);RETURN
++  ENDIF
++  DO ni=1,ctx%nions
++   ctx%offset(ni)=ctx%stride;ctx%stride=ctx%stride+p(ctx%ityp(ni))%LMMAX
++  ENDDO
++  next_generation=next_generation+1;ctx%generation=next_generation;ctx%ready=.true.
++  message='raw PAW factorized Chebyshev context ready; no dense G-entry cache'
++ END SUBROUTINE
++ REAL(q) FUNCTION tail_bound(a,n)
++  REAL(q),INTENT(IN)::a
++  INTEGER,INTENT(IN)::n
++  REAL(q)::logterm
++  tail_bound=0
++  IF(a==0)RETURN
++  IF(a>=REAL(n+2,q))THEN
++   tail_bound=HUGE(1._q);RETURN
++  ENDIF
++  logterm=REAL(n+1,q)*LOG(a)-LOG_GAMMA(REAL(n+2,q))
++  IF(logterm>LOG(HUGE(1._q))-2)THEN
++   tail_bound=HUGE(1._q);RETURN
++  ENDIF
++  tail_bound=MAX(TINY(1._q),EXP(logterm))/(1-a/REAL(n+2,q))
++ END FUNCTION
++ REAL(q) FUNCTION cheb_one(coeff,x)
++  REAL(q),INTENT(IN)::coeff(0:),x
++  REAL(q)::b1,b2,b0
++  INTEGER::k
++  b1=0;b2=0
++  DO k=UBOUND(coeff,1),1,-1
++   b0=2*x*b1-b2+coeff(k);b2=b1;b1=b0
++  ENDDO
++  cheb_one=x*b1-b2+coeff(0)
++ END FUNCTION
++ SUBROUTINE build_species(s,p,qmax,booked,ierr,message)
++  TYPE(paw_species),INTENT(INOUT)::s
++  TYPE(potcar),INTENT(IN)::p
++  REAL(q),INTENT(IN)::qmax
++  INTEGER(int64),INTENT(OUT)::booked
++  INTEGER,INTENT(OUT)::ierr
++  CHARACTER(*),INTENT(OUT)::message
++  INTEGER::nr,nc,ellmax,c1,c2,l,m,e,rid,n,deg,j,k,i,idx,ic,stat
++  INTEGER,ALLOCATABLE::base(:),lookup(:,:,:)
++  REAL(q),ALLOCATABLE::rho(:,:),sample(:,:),bessel(:,:),mass(:),bounds(:)
++  REAL(q)::x,qvalue,integral,error,weight
++  INTEGER(int64)::cache_bytes,work_bytes
++  ierr=0;message='';booked=0;s%nlm=p%LMMAX
++  IF(p%LMMAX<0.OR.p%LMAX<0)THEN
++   ierr=1;message='WINT PAW: negative projector dimensions';RETURN
++  ENDIF
++  IF(.NOT.ASSOCIATED(p%WAE).AND..NOT.ASSOCIATED(p%WPS))RETURN
++  IF(.NOT.ASSOCIATED(p%WAE).OR..NOT.ASSOCIATED(p%WPS).OR..NOT.ASSOCIATED(p%LPS).OR. &
++       .NOT.ASSOCIATED(p%R%R).OR..NOT.ASSOCIATED(p%R%SI))THEN
++   ierr=1;message='WINT PAW: incomplete raw radial data';RETURN
++  ENDIF
++  nr=p%R%NMAX;nc=p%LMAX
++  IF(nr<1.OR.nc<1.OR.SIZE(p%LPS)<nc)THEN
++   ierr=1;message='WINT PAW: invalid radial/channel dimensions';RETURN
++  ENDIF
++  IF(MIN(SIZE(p%WAE,1),SIZE(p%WPS,1),SIZE(p%R%R),SIZE(p%R%SI))<nr.OR.MIN(SIZE(p%WAE,2),SIZE(p%WPS,2))<nc)THEN
++   ierr=1;message='WINT PAW: truncated radial data';RETURN
++  ENDIF
++  IF(ANY(p%LPS(:nc)<0).OR.SUM(2*p%LPS(:nc)+1)/=p%LMMAX)THEN
++   ierr=1;message='WINT PAW: inconsistent angular projector layout';RETURN
++  ENDIF
++  ellmax=MAXVAL(p%LPS(:nc));s%lmax=2*ellmax
++  IF(LMAXCG<ellmax.OR.(s%lmax>2.AND.LMAXCG<s%lmax-1))THEN
++   ierr=1;message='WINT PAW: native Gaunt table lacks full raw angular bandwidth';RETURN
++  ENDIF
++  IF(.NOT.ALL(ieee_is_finite(p%R%R(:nr))).OR..NOT.ALL(ieee_is_finite(p%R%SI(:nr))).OR. &
++       .NOT.ALL(ieee_is_finite(p%WAE(:nr,:nc))).OR..NOT.ALL(ieee_is_finite(p%WPS(:nr,:nc))))THEN
++   ierr=1;message='WINT PAW: nonfinite radial data';RETURN
++  ENDIF
++  IF(ANY(p%R%R(:nr)<=0).OR.ANY(p%R%R(2:nr)<=p%R%R(:nr-1)))THEN
++   ierr=1;message='WINT PAW: require positive ordered radial grid';RETURN
++  ENDIF
++  s%ne=0;s%nrad=0
++  DO c1=1,nc
++   DO c2=c1,nc
++    DO l=ABS(p%LPS(c1)-p%LPS(c2)),p%LPS(c1)+p%LPS(c2),2
++     s%ne=s%ne+2*l+1;s%nrad=s%nrad+1
++    ENDDO
++   ENDDO
++  ENDDO
++  ! Reserve all maximum-degree construction arrays before allocating any of them.
++  work_bytes=8_int64*nr*(s%nrad+s%lmax+1)+8_int64*(MAX_DEGREE+1)*s%nrad &
++       +16_int64*s%nrad+4_int64*nc+4_int64*nc*nc*(s%lmax+1)**2
++  IF(.NOT.hold_bytes(work_bytes))THEN
++   ierr=2;message='WINT PAW: radial construction exceeds total 512MiB workspace';RETURN
++  ENDIF
++  ALLOCATE(rho(nr,s%nrad),sample(0:MAX_DEGREE,s%nrad),bessel(nr,0:s%lmax), &
++       mass(s%nrad),bounds(s%nrad),base(nc),lookup(nc,nc,(s%lmax+1)**2),STAT=stat)
++  IF(stat/=0)THEN
++   ierr=2;message='WINT PAW: radial construction allocation failed';GOTO 900
++  ENDIF
++  rid=0
++  DO c1=1,nc
++   DO c2=c1,nc
++    DO l=ABS(p%LPS(c1)-p%LPS(c2)),p%LPS(c1)+p%LPS(c2),2
++     rid=rid+1
++     DO i=1,nr
++      rho(i,rid)=(p%WAE(i,c1)*p%WAE(i,c2)-p%WPS(i,c1)*p%WPS(i,c2))*p%R%SI(i)
++      IF(.NOT.ieee_is_finite(rho(i,rid)))THEN
++       ierr=3;message='WINT PAW: raw radial-product overflow';GOTO 900
++      ENDIF
++     ENDDO
++    ENDDO
++   ENDDO
++  ENDDO
++  mass=0
++  DO rid=1,s%nrad
++   DO i=1,nr
++    mass(rid)=mass(rid)+ABS(rho(i,rid))
++   ENDDO
++  ENDDO
++  deg=16
++  IF(qmax==0)deg=0
++  DO
++   bounds=0
++   DO i=1,nr
++    weight=tail_bound(qmax*p%R%R(i)/4,deg)
++    DO rid=1,s%nrad
++     ! Factor 8 conservatively exceeds the exact-arithmetic interpolation bound4.
++     IF(ABS(rho(i,rid))>0)THEN
++      IF(weight>=HUGE(1._q)/MAX(1._q,8*ABS(rho(i,rid))))THEN
++       bounds(rid)=HUGE(1._q)
++      ELSE
++       integral=8*ABS(rho(i,rid))*weight
++       IF(bounds(rid)>HUGE(1._q)-integral)THEN
++        bounds(rid)=HUGE(1._q)
++       ELSE
++        bounds(rid)=bounds(rid)+integral
++       ENDIF
++      ENDIF
++     ENDIF
++    ENDDO
++   ENDDO
++   IF(MAXVAL(bounds)<=TRUNC_TOL)EXIT
++   deg=2*deg
++   IF(deg>MAX_DEGREE)THEN
++    ierr=3;message='WINT PAW: radial Chebyshev truncation bound exceeds degree limit';GOTO 900
++   ENDIF
++  ENDDO
++  cache_bytes=16_int64*s%ne*s%nlm*s%nlm+12_int64*s%ne+12_int64*s%nrad &
++       +8_int64*(deg+1)*s%nrad+16_int64*s%nrad
++  IF(.NOT.hold_bytes(cache_bytes))THEN
++   ierr=2;message='WINT PAW: radial cache exceeds total 512MiB workspace';GOTO 900
++  ENDIF
++  booked=cache_bytes;s%degree=deg
++  ALLOCATE(s%ell(s%ne),s%lm(s%ne),s%rad(s%ne),s%rc1(s%nrad),s%rc2(s%nrad),s%rell(s%nrad), &
++       s%cg(s%ne,s%nlm*s%nlm),s%cheb(0:deg,s%nrad),s%head(s%nrad),s%bound(s%nrad),STAT=stat)
++  IF(stat/=0)THEN
++   ierr=2;message='WINT PAW: radial cache allocation failed';GOTO 900
++  ENDIF
++  s%cg=0;lookup=0;idx=0
++  DO c1=1,nc
++   base(c1)=idx;idx=idx+2*p%LPS(c1)+1
++  ENDDO
++  e=0;rid=0
++  DO c1=1,nc
++   DO c2=c1,nc
++    DO l=ABS(p%LPS(c1)-p%LPS(c2)),p%LPS(c1)+p%LPS(c2),2
++     rid=rid+1;s%rc1(rid)=c1;s%rc2(rid)=c2;s%rell(rid)=l;s%head(rid)=0
++     IF(l==0)s%head(rid)=SUM(rho(:,rid))
++     DO m=-l,l
++      e=e+1;s%ell(e)=l;s%lm(e)=l*(l+1)+m+1;s%rad(e)=rid;lookup(c1,c2,s%lm(e))=e
++     ENDDO
++    ENDDO
++   ENDDO
++  ENDDO
++  s%bound=bounds
++  DO c1=1,nc
++   DO c2=c1,nc
++    CALL YLM3LOOKUP(p%LPS(c1),p%LPS(c2),idx)
++    DO i=1,2*p%LPS(c1)+1
++     DO j=1,2*p%LPS(c2)+1
++      idx=idx+1
++      DO ic=INDCG(idx),INDCG(idx+1)-1
++       e=lookup(c1,c2,JS(ic));IF(e<1)CYCLE
++       k=base(c1)+i+(base(c2)+j-1)*s%nlm;s%cg(e,k)=s%cg(e,k)+YLM3(ic)
++       IF(c1/=c2)THEN
++        k=base(c2)+j+(base(c1)+i-1)*s%nlm;s%cg(e,k)=s%cg(e,k)+YLM3(ic)
++       ENDIF
++      ENDDO
++     ENDDO
++    ENDDO
++   ENDDO
++  ENDDO
++  IF(deg==0)THEN
++   s%cheb(0,:)=s%head
++  ELSE
++   DO j=0,deg
++    x=COS(PI_W*REAL(j,q)/REAL(deg,q));qvalue=qmax*(x+1)/2
++    CALL radial_samples(qvalue,p,s,rho,bessel,sample(j,:))
++   ENDDO
++   DO rid=1,s%nrad
++    DO k=0,deg
++     integral=.5_q*(sample(0,rid)+(-1._q)**k*sample(deg,rid))
++     DO j=1,deg-1
++      integral=integral+sample(j,rid)*COS(PI_W*REAL(k*j,q)/REAL(deg,q))
++     ENDDO
++     s%cheb(k,rid)=integral*(2._q/REAL(deg,q))
++    ENDDO
++    s%cheb(0,rid)=s%cheb(0,rid)/2;s%cheb(deg,rid)=s%cheb(deg,rid)/2
++   ENDDO
++   s%check_error=0
++   DO j=0,deg-1
++    x=COS(PI_W*(REAL(j,q)+.5_q)/REAL(deg,q));qvalue=qmax*(x+1)/2
++    CALL radial_samples(qvalue,p,s,rho,bessel,sample(j,:))
++    DO rid=1,s%nrad
++     error=ABS(cheb_one(s%cheb(:,rid),x)-sample(j,rid));s%check_error=MAX(s%check_error,error)
++     IF(error>5.e-14_q*MAX(1._q,mass(rid)))THEN
++      ierr=3;message='WINT PAW: radial interpolation floating-point validation failed';GOTO 900
++     ENDIF
++    ENDDO
++   ENDDO
++  ENDIF
++  IF(.NOT.ALL(ieee_is_finite(s%cheb)))THEN
++   ierr=3;message='WINT PAW: nonfinite radial Chebyshev cache';GOTO 900
++  ENDIF
++900 CONTINUE
++  IF(ALLOCATED(rho))DEALLOCATE(rho)
++  IF(ALLOCATED(sample))DEALLOCATE(sample)
++  IF(ALLOCATED(bessel))DEALLOCATE(bessel)
++  IF(ALLOCATED(mass))DEALLOCATE(mass)
++  IF(ALLOCATED(bounds))DEALLOCATE(bounds)
++  IF(ALLOCATED(base))DEALLOCATE(base)
++  IF(ALLOCATED(lookup))DEALLOCATE(lookup)
++  CALL release_bytes(work_bytes)
++  IF(ierr/=0.AND.booked>0)THEN
++   ! Caller will deallocate the partially built species with its context.
++   CALL release_bytes(booked);booked=0
++  ENDIF
++ END SUBROUTINE
++ SUBROUTINE radial_samples(qvalue,p,s,rho,bessel,values)
++  REAL(q),INTENT(IN)::qvalue,rho(:,:)
++  TYPE(potcar),INTENT(IN)::p
++  TYPE(paw_species),INTENT(IN)::s
++  REAL(q),INTENT(OUT)::bessel(:,0:),values(:)
++  INTEGER::l,i,rid
++  DO l=0,s%lmax
++   IF(qvalue==0)THEN
++    bessel(:,l)=0;IF(l==0)bessel(:,l)=1
++   ELSE
++    DO i=1,p%R%NMAX
++     CALL SBESSEL(qvalue*p%R%R(i),bessel(i,l),l)
++    ENDDO
++   ENDIF
++  ENDDO
++  DO rid=1,s%nrad
++   values(rid)=0
++   DO i=1,p%R%NMAX
++    values(rid)=values(rid)+rho(i,rid)*bessel(i,s%rell(rid))
++   ENDDO
++  ENDDO
++ END SUBROUTINE
++ SUBROUTINE wint_paw_begin_accumulator(ctx,npairs,acc,ierr,message)
++  TYPE(wint_paw_context),INTENT(IN)::ctx
++  INTEGER,INTENT(IN)::npairs
++  TYPE(wint_paw_accumulator),INTENT(INOUT)::acc
++  INTEGER,INTENT(OUT)::ierr
++  CHARACTER(*),INTENT(OUT)::message
++  INTEGER::nt,stat
++  INTEGER(int64)::bytes
++  ierr=0;message='';CALL wint_paw_reset_accumulator(acc)
++  IF(.NOT.ctx%ready.OR.npairs<1)THEN
++   ierr=1;message='WINT PAW: invalid accumulator context/pair count';RETURN
++  ENDIF
++  bytes=4096_int64*(SIZE(ctx%species)+1)
++  DO nt=1,SIZE(ctx%species)
++   bytes=bytes+16_int64*ctx%species(nt)%natom*ctx%species(nt)%ne*INT(npairs,int64)
++  ENDDO
++  IF(.NOT.hold_bytes(bytes))THEN
++   ierr=2;message='WINT PAW: accumulator exceeds total 512MiB workspace';RETURN
++  ENDIF
++  acc%bytes=bytes;acc%npairs=npairs;acc%generation=ctx%generation
++  ALLOCATE(acc%species(SIZE(ctx%species)),STAT=stat)
++  IF(stat==0)THEN
++   DO nt=1,SIZE(ctx%species)
++    ALLOCATE(acc%species(nt)%coef(ctx%species(nt)%natom,ctx%species(nt)%ne,npairs),STAT=stat)
++    IF(stat/=0)EXIT
++    acc%species(nt)%coef=0
++   ENDDO
++  ENDIF
++  IF(stat/=0)THEN
++   ierr=2;message='WINT PAW: accumulator allocation failed';CALL wint_paw_reset_accumulator(acc);RETURN
++  ENDIF
++  acc%ready=.true.;message='raw PAW k-sum accumulator ready'
++ END SUBROUTINE
++ SUBROUTINE wint_paw_accumulate_batch(ctx,acc,w1,w4,unfolded_d,ierr,message,weight)
++  TYPE(wint_paw_context),INTENT(IN)::ctx
++  TYPE(wint_paw_accumulator),INTENT(INOUT)::acc
++  TYPE(wavefun1),INTENT(IN)::w1(:),w4(:)
++  REAL(q),INTENT(IN)::unfolded_d(3)
++  INTEGER,INTENT(OUT)::ierr
++  CHARACTER(*),INTENT(OUT)::message
++  REAL(q),OPTIONAL,INTENT(IN)::weight
++#ifndef gammareal
++  COMPLEX(q),ALLOCATABLE::p1(:,:),p4(:,:),outer(:,:),occ(:,:)
++  COMPLEX(q)::phase,value
++  REAL(q)::shift(3),w,angle
++  INTEGER::ns,bad,i,j,k,n1,n4,ntotal,nt,ni,nlm,atom,isp,base,pair,stat,e
++  INTEGER(int64)::work_bytes
++  LOGICAL::held
++#endif
++  ierr=0;message=''
++#ifdef gammareal
++  ierr=1;message='WINT PAW: gamma-real build unsupported';RETURN
++#else
++  n1=SIZE(w1);n4=SIZE(w4)
++  IF(n1<1.OR.n4<1)THEN
++   ierr=1;message='WINT PAW: empty orbital batch';RETURN
++  ENDIF
++  IF(.NOT.ASSOCIATED(w1(1)%WDES1).OR..NOT.ASSOCIATED(w4(1)%WDES1))THEN
++   ierr=1;message='WINT PAW: missing first orbital descriptor';RETURN
++  ENDIF
++  IF(.NOT.ASSOCIATED(w1(1)%WDES1%COMM_INB))THEN
++   ierr=1;message='WINT PAW: missing projector communicator';RETURN
++  ENDIF
++  bad=0;ns=w1(1)%WDES1%NRSPINORS;w=1
++  IF(PRESENT(weight))w=weight
++  IF(.NOT.ctx%ready.OR..NOT.acc%ready.OR.acc%generation/=ctx%generation)bad=1
++  IF(INT(n1,int64)*n4/=INT(acc%npairs,int64))bad=1
++  IF(acc%batches>0.AND.(acc%n1/=n1.OR.acc%n4/=n4))bad=1
++  IF(ns/=1.AND.ns/=2)bad=1
++  IF(.NOT.ieee_is_finite(w).OR..NOT.ALL(ieee_is_finite(unfolded_d)))bad=1
++  IF(ALL(ieee_is_finite(unfolded_d)))THEN
++   shift=unfolded_d-ctx%qfrac
++   IF(MAXVAL(ABS(shift-ANINT(shift)))>1.e-8_q)bad=1
++  ENDIF
++  DO k=1,n1+n4
++   IF(k<=n1)THEN
++    IF(.NOT.valid_orbital(w1(k),w1(1),ctx%stride,ns))bad=1
++   ELSE
++    IF(.NOT.valid_orbital(w4(k-n1),w1(1),ctx%stride,ns))bad=1
++   ENDIF
++  ENDDO
++  CALLMPI(M_sum_i(w1(1)%WDES1%COMM_INB,bad,1))
++  IF(bad/=0)THEN
++   ierr=1;message='WINT PAW: inconsistent batch/layout/transfer or accumulator generation';RETURN
++  ENDIF
++  ntotal=ctx%stride*ns
++  ! Include conservative full BLAS operand/output packing reservations.
++  work_bytes=16_int64*ntotal*(n1+n4)+32_int64*ctx%maxnlm**2*acc%npairs &
++       +32_int64*ctx%maxne*acc%npairs+16_int64*ctx%maxne*ctx%maxnlm**2
++  held=hold_bytes(work_bytes);bad=0;IF(.NOT.held)bad=1
++  CALLMPI(M_sum_i(w1(1)%WDES1%COMM_INB,bad,1))
++  IF(bad/=0)THEN
++   IF(held)CALL release_bytes(work_bytes)
++   ierr=2;message='WINT PAW: batch merge exceeds total 512MiB workspace';RETURN
++  ENDIF
++  ALLOCATE(p1(ntotal,n1),p4(ntotal,n4),outer(ctx%maxnlm**2,acc%npairs),occ(ctx%maxne,acc%npairs),STAT=stat)
++  bad=0;IF(stat/=0)bad=1
++  CALLMPI(M_sum_i(w1(1)%WDES1%COMM_INB,bad,1))
++  IF(bad/=0)THEN
++   ierr=2;message='WINT PAW: merge/batch allocation failed';GOTO 900
++  ENDIF
++  DO i=1,n1
++   CALL MRG_PROJ(w1(i)%WDES1,p1(:,i),w1(i)%CPROJ)
++  ENDDO
++  DO j=1,n4
++   CALL MRG_PROJ(w4(j)%WDES1,p4(:,j),w4(j)%CPROJ)
++  ENDDO
++  IF(.NOT.finite_complex(p1).OR..NOT.finite_complex(p4))THEN
++   ierr=1;message='WINT PAW: nonfinite merged projectors';GOTO 900
++  ENDIF
++  DO nt=1,SIZE(ctx%species)
++   nlm=ctx%species(nt)%nlm
++   IF(ctx%species(nt)%ne==0)CYCLE
++   DO atom=1,ctx%species(nt)%natom
++    ni=ctx%species(nt)%atoms(atom);outer=0
++    DO j=1,n4
++     DO i=1,n1
++      pair=i+n1*(j-1)
++      DO isp=0,ns-1
++       base=ctx%offset(ni)+isp*ctx%stride
++       DO k=1,nlm
++        DO e=1,nlm
++         outer(e+(k-1)*nlm,pair)=outer(e+(k-1)*nlm,pair)+p1(base+e,i)*CONJG(p4(base+k,j))
++        ENDDO
++       ENDDO
++      ENDDO
++     ENDDO
++    ENDDO
++    CALL ZGEMM('N','N',ctx%species(nt)%ne,acc%npairs,nlm*nlm,CMPLX(1._q,0._q,q), &
++         ctx%species(nt)%cg,ctx%species(nt)%ne,outer,ctx%maxnlm**2, &
++         CMPLX(0._q,0._q,q),occ,ctx%maxne)
++    angle=2*PI_W*DOT_PRODUCT(unfolded_d,ctx%pos(:,ni));phase=w*CMPLX(COS(angle),SIN(angle),q)
++    DO pair=1,acc%npairs
++     DO e=1,ctx%species(nt)%ne
++      value=acc%species(nt)%coef(atom,e,pair)+phase*occ(e,pair)
++      IF(.NOT.ieee_is_finite(REAL(value,q)).OR..NOT.ieee_is_finite(AIMAG(value)))THEN
++       ierr=3;message='WINT PAW: accumulated projector occupancy overflow';GOTO 900
++      ENDIF
++      acc%species(nt)%coef(atom,e,pair)=value
++     ENDDO
++    ENDDO
++   ENDDO
++  ENDDO
++  acc%n1=n1;acc%n4=n4;acc%batches=acc%batches+1;message='raw PAW orbital batch accumulated; no G transform'
++900 CONTINUE
++  IF(ALLOCATED(p1))DEALLOCATE(p1)
++  IF(ALLOCATED(p4))DEALLOCATE(p4)
++  IF(ALLOCATED(outer))DEALLOCATE(outer)
++  IF(ALLOCATED(occ))DEALLOCATE(occ)
++  CALL release_bytes(work_bytes)
++  IF(ierr/=0)acc%ready=.false.
++#endif
++ END SUBROUTINE
++ LOGICAL FUNCTION valid_orbital(w,reference,stride,ns)
++  TYPE(wavefun1),INTENT(IN)::w,reference
++  INTEGER,INTENT(IN)::stride,ns
++  valid_orbital=.false.
++#ifndef gammareal
++  IF(.NOT.ASSOCIATED(w%WDES1).OR..NOT.ASSOCIATED(w%CPROJ))RETURN
++  IF(.NOT.ASSOCIATED(w%WDES1%COMM_INB))RETURN
++  IF(w%WDES1%NRSPINORS/=ns.OR.w%WDES1%NPRO_TOT/=stride*ns)RETURN
++  IF(w%WDES1%LSPIRAL.OR.w%WDES1%LGAMMA)RETURN
++  IF(w%WDES1%LNONCOLLINEAR.NEQV.(ns==2))RETURN
++  IF(w%WDES1%COMM_INB%MPI_COMM/=reference%WDES1%COMM_INB%MPI_COMM)RETURN
++  IF(SIZE(w%CPROJ)<w%WDES1%NPRO)RETURN
++  valid_orbital=.true.
++#endif
++ END FUNCTION
++ LOGICAL FUNCTION finite_complex(a)
++  COMPLEX(q),INTENT(IN)::a(:,:)
++  INTEGER::i,j
++  finite_complex=.false.
++  DO j=1,SIZE(a,2)
++   DO i=1,SIZE(a,1)
++    IF(.NOT.ieee_is_finite(REAL(a(i,j),q)).OR..NOT.ieee_is_finite(AIMAG(a(i,j))))RETURN
++   ENDDO
++  ENDDO
++  finite_complex=.true.
++ END FUNCTION
++ SUBROUTINE wint_paw_add_accumulated(ctx,acc,gcharge,ierr,message)
++  TYPE(wint_paw_context),INTENT(IN)::ctx
++  TYPE(wint_paw_accumulator),INTENT(IN)::acc
++  COMPLEX(q),INTENT(INOUT)::gcharge(:,:)
++  INTEGER,INTENT(OUT)::ierr
++  CHARACTER(*),INTENT(OUT)::message
++  REAL(q),ALLOCATABLE::xyz(:,:),qabs(:),x(:),ylm(:,:),radial(:,:),b1(:),b2(:),b0(:)
++  COMPLEX(q),ALLOCATABLE::phase(:,:),structure(:,:),ff(:,:),block_charge(:,:)
++  INTEGER::bs,na,ib,nb,ig,i,j,k,nt,e,rid,atom,ni,ab,an,pair,stat,pass
++  INTEGER(int64)::per_g,work_bytes,available,packing_bytes
++  REAL(q)::cart(3),frac(3),angle,density_bound,term,rad_bound,coeff_mass,gmax
++  COMPLEX(q)::factor,value,beta
++  ierr=0;message=''
++  IF(.NOT.ctx%ready.OR..NOT.acc%ready.OR.acc%generation/=ctx%generation)THEN
++   ierr=1;message='WINT PAW: invalid context/accumulator generation';RETURN
++  ENDIF
++  IF(SIZE(gcharge,1)/=ctx%ng.OR.SIZE(gcharge,2)/=acc%npairs)THEN
++   ierr=1;message='WINT PAW: accumulated output shape mismatch';RETURN
++  ENDIF
++  IF(.NOT.finite_complex(gcharge))THEN
++   ierr=1;message='WINT PAW: nonfinite incoming density';RETURN
++  ENDIF
++  IF(ctx%ng==0.OR.ctx%maxne==0)THEN
++   message='raw PAW accumulated density has no local modes';RETURN
++  ENDIF
++  ! Positive absolute coefficient bound is an overflow-range guard, not an
++  ! accuracy claim. It avoids a second expensive G transform for atomicity.
++  DO pair=1,acc%npairs
++   density_bound=0
++   DO nt=1,SIZE(ctx%species)
++    DO e=1,ctx%species(nt)%ne
++     rid=ctx%species(nt)%rad(e)
++     rad_bound=MAX(SUM(ABS(ctx%species(nt)%cheb(:,rid))),ABS(ctx%species(nt)%head(rid)))
++     coeff_mass=0
++     DO atom=1,ctx%species(nt)%natom
++      coeff_mass=coeff_mass+ABS(acc%species(nt)%coef(atom,e,pair))
++     ENDDO
++     term=ctx%nfft*4*PI_W*SQRT(REAL(2*ctx%species(nt)%ell(e)+1,q)/(4*PI_W))*rad_bound*coeff_mass
++     IF(.NOT.ieee_is_finite(term).OR.term>HUGE(1._q)/64)THEN
++      ierr=3;message='WINT PAW: density magnitude cannot be bounded safely';RETURN
++     ENDIF
++     IF(density_bound>HUGE(1._q)/64-term)THEN
++      ierr=3;message='WINT PAW: density magnitude cannot be bounded safely';RETURN
++     ENDIF
++     density_bound=density_bound+term
++    ENDDO
++   ENDDO
++   gmax=0
++   DO i=1,ctx%ng
++    gmax=MAX(gmax,ABS(REAL(gcharge(i,pair),q)),ABS(AIMAG(gcharge(i,pair))))
++   ENDDO
++   IF(gmax>HUGE(1._q)-8*density_bound)THEN
++    ierr=3;message='WINT PAW: incoming plus accumulated density can overflow';RETURN
++   ENDIF
++  ENDDO
++  na=MIN(MAX_ATOMBLOCK,MAX(1,ctx%maxatom))
++  per_g=8_int64*(3+1+1+(ctx%lmax+1)**2+ctx%maxrad+3) &
++       +16_int64*(2*na+2*ctx%maxne*acc%npairs+ctx%maxne+acc%npairs)
++  packing_bytes=16_int64*na*ctx%maxne*acc%npairs
++  available=MEMORY_LIMIT-PLAN_RESERVE-resident-packing_bytes
++  bs=INT(MIN(INT(MAX_GBLOCK,int64),available/MAX(1_int64,per_g)))
++  bs=MIN(bs,ctx%ng)
++  IF(bs<1)THEN
++   ierr=2;message='WINT PAW: no G block fits total 512MiB workspace';RETURN
++  ENDIF
++  work_bytes=per_g*bs+packing_bytes
++  IF(.NOT.hold_bytes(work_bytes))THEN
++   ierr=2;message='WINT PAW: G block exceeds total 512MiB workspace';RETURN
++  ENDIF
++  ALLOCATE(xyz(bs,3),qabs(bs),x(bs),ylm(bs,(ctx%lmax+1)**2),radial(bs,ctx%maxrad), &
++       b1(bs),b2(bs),b0(bs),phase(bs,na),structure(bs,ctx%maxne*acc%npairs), &
++       ff(bs,ctx%maxne),block_charge(bs,acc%npairs),STAT=stat)
++  IF(stat/=0)THEN
++   ierr=2;message='WINT PAW: G block allocation failed';GOTO 900
++  ENDIF
++   DO ib=1,ctx%ng,bs
++    nb=MIN(bs,ctx%ng-ib+1)
++    DO i=1,nb
++     ig=ib+i-1;frac=REAL(ctx%gvec(:,ig),q)+ctx%qfrac;cart=2*PI_W*MATMUL(ctx%b,frac)
++     qabs(i)=SQRT(SUM(cart*cart))
++     IF(qabs(i)>0)THEN
++      xyz(i,:)=cart/qabs(i)
++     ELSE
++      xyz(i,:)=[0._q,0._q,1._q]
++     ENDIF
++     x(i)=0
++     IF(ctx%qmax>0)x(i)=MAX(-1._q,MIN(1._q,2*qabs(i)/ctx%qmax-1))
++    ENDDO
++    CALL SETYLM(ctx%lmax,nb,ylm,xyz(:,1),xyz(:,2),xyz(:,3))
++    block_charge=0
++    DO nt=1,SIZE(ctx%species)
++     ASSOCIATE(s=>ctx%species(nt))
++     IF(s%ne==0.OR.s%natom==0)CYCLE
++     DO rid=1,s%nrad
++      b1=0;b2=0
++      DO k=s%degree,1,-1
++       DO i=1,nb
++        b0(i)=2*x(i)*b1(i)-b2(i)+s%cheb(k,rid)
++       ENDDO
++       b2(:nb)=b1(:nb);b1(:nb)=b0(:nb)
++      ENDDO
++      DO i=1,nb
++       radial(i,rid)=x(i)*b1(i)-b2(i)+s%cheb(0,rid)
++       IF(qabs(i)==0)radial(i,rid)=s%head(rid)
++      ENDDO
++     ENDDO
++     DO e=1,s%ne
++      factor=(ctx%nfft*4*PI_W)*CMPLX(0._q,-1._q,q)**s%ell(e)
++      DO i=1,nb
++       ff(i,e)=factor*ylm(i,s%lm(e))*radial(i,s%rad(e))
++      ENDDO
++     ENDDO
++     DO ab=1,s%natom,na
++      an=MIN(na,s%natom-ab+1)
++      DO atom=1,an
++       ni=s%atoms(ab+atom-1)
++       DO i=1,nb
++        angle=-2*PI_W*DOT_PRODUCT(REAL(ctx%gvec(:,ib+i-1),q)+ctx%qfrac,ctx%pos(:,ni))
++        phase(i,atom)=CMPLX(COS(angle),SIN(angle),q)
++       ENDDO
++      ENDDO
++      beta=CMPLX(1._q,0._q,q)
++      IF(ab==1)beta=CMPLX(0._q,0._q,q)
++      CALL ZGEMM('N','N',nb,s%ne*acc%npairs,an,CMPLX(1._q,0._q,q),phase,bs, &
++           acc%species(nt)%coef(ab,1,1),s%natom,beta,structure,bs)
++     ENDDO
++     DO pair=1,acc%npairs
++      DO e=1,s%ne
++       j=e+s%ne*(pair-1)
++       DO i=1,nb
++        block_charge(i,pair)=block_charge(i,pair)+ff(i,e)*structure(i,j)
++       ENDDO
++      ENDDO
++     ENDDO
++     END ASSOCIATE
++    ENDDO
++    DO pair=1,acc%npairs
++     DO i=1,nb
++      value=gcharge(ib+i-1,pair)+block_charge(i,pair)
++      IF(.NOT.ieee_is_finite(REAL(value,q)).OR..NOT.ieee_is_finite(AIMAG(value)))THEN
++       ierr=3;message='WINT PAW: accumulated density overflow';GOTO 900
++      ENDIF
++      gcharge(ib+i-1,pair)=value
++     ENDDO
++    ENDDO
++   ENDDO
++  message='raw PAW k-summed density added with bounded G/atom blocks'
++900 CONTINUE
++  IF(ALLOCATED(xyz))DEALLOCATE(xyz)
++  IF(ALLOCATED(qabs))DEALLOCATE(qabs)
++  IF(ALLOCATED(x))DEALLOCATE(x)
++  IF(ALLOCATED(ylm))DEALLOCATE(ylm)
++  IF(ALLOCATED(radial))DEALLOCATE(radial)
++  IF(ALLOCATED(b1))DEALLOCATE(b1)
++  IF(ALLOCATED(b2))DEALLOCATE(b2)
++  IF(ALLOCATED(b0))DEALLOCATE(b0)
++  IF(ALLOCATED(phase))DEALLOCATE(phase)
++  IF(ALLOCATED(structure))DEALLOCATE(structure)
++  IF(ALLOCATED(ff))DEALLOCATE(ff)
++  IF(ALLOCATED(block_charge))DEALLOCATE(block_charge)
++  CALL release_bytes(work_bytes)
++ END SUBROUTINE
++ SUBROUTINE wint_paw_add_density(ctx,w1,w4,unfolded_d,gcharge,ierr,message)
++  TYPE(wint_paw_context),INTENT(IN)::ctx
++  TYPE(wavefun1),INTENT(IN)::w1,w4
++  REAL(q),INTENT(IN)::unfolded_d(3)
++  COMPLEX(q),TARGET,CONTIGUOUS,INTENT(INOUT)::gcharge(:)
++  INTEGER,INTENT(OUT)::ierr
++  CHARACTER(*),INTENT(OUT)::message
++  TYPE(wint_paw_accumulator)::acc
++  COMPLEX(q),POINTER::matrix(:,:)
++  matrix(1:SIZE(gcharge),1:1)=>gcharge
++  CALL wint_paw_begin_accumulator(ctx,1,acc,ierr,message)
++  IF(ierr==0)CALL wint_paw_accumulate_batch(ctx,acc,[w1],[w4],unfolded_d,ierr,message)
++  IF(ierr==0)CALL wint_paw_add_accumulated(ctx,acc,matrix,ierr,message)
++  CALL wint_paw_reset_accumulator(acc)
++ END SUBROUTINE
++END MODULE
+diff --git a/src/wint_layered.F b/src/wint_layered.F
+new file mode 100644
+--- /dev/null
++++ b/src/wint_layered.F
+@@ -0,0 +1,884 @@
++! Physical layered interactions on fixed Fourier pair densities.
++MODULE wint_layered
++  USE iso_fortran_env, ONLY: real64,int64,int32
++  USE, INTRINSIC :: ieee_arithmetic, ONLY: ieee_is_finite
++  IMPLICIT NONE
++  PRIVATE
++  INTEGER, PARAMETER :: dp=real64
++  REAL(dp), PARAMETER :: pi=3.141592653589793238462643383279502884_dp
++  REAL(dp), PARAMETER :: sqrtpi=1.77245385090551602729816748334114518_dp
++  REAL(dp), PARAMETER :: tailcut=8.5_dp
++  INTEGER(int64), PARAMETER :: memory_limit=536870912_int64
++  INTEGER, PARAMETER :: panel_order=24
++  PUBLIC :: wlayer_init,wlayer_apply,wlayer_block,wlayer_normal,wlayer_info,wlayer_reset
++  LOGICAL, SAVE :: ready=.false.
++  INTEGER, SAVE :: model_s=0,mesh_s(3)=0,grid_s(2)=0,override_s(2)=0,mmax_s=-1
++  REAL(dp), SAVE :: a_s(3,3)=0,normal_s(3)=0,b_s(3,2)=0,zsign_s=1
++  REAL(dp), SAVE :: kappa_s=0,eps_s=1,r0_s=0,d_s=0,z0_s=0,tol_s=1e-8_dp
++  REAL(dp), SAVE :: rin_s=0,alpha_s=0,lz_s=0,area_s=0,qmax_s=-1,quaderr_s=0
++  INTEGER(int64), SAVE :: bytes_s=0,peak_s=0,reserve_input_s=0
++  REAL(dp), ALLOCATABLE, SAVE :: tl(:),wl(:),xh(:),wh(:),plane(:,:,:)
++  REAL(dp), ALLOCATABLE, SAVE :: mt(:,:,:)
++CONTAINS
++  SUBROUTINE wlayer_reset()
++    IF (ALLOCATED(tl)) DEALLOCATE(tl,wl)
++    IF (ALLOCATED(xh)) DEALLOCATE(xh,wh)
++    IF (ALLOCATED(plane)) DEALLOCATE(plane)
++    IF (ALLOCATED(mt)) DEALLOCATE(mt)
++    ready=.false.;mmax_s=-1;qmax_s=-1;bytes_s=0;peak_s=0;reserve_input_s=0;quaderr_s=0
++  END SUBROUTINE
++
++  SUBROUTINE wlayer_info(ngrid,rin,alpha,lz,bytes,ntlow,nthigh,maxmode,quad_error)
++    INTEGER, INTENT(OUT) :: ngrid(2),ntlow,nthigh,maxmode
++    REAL(dp), INTENT(OUT) :: rin,alpha,lz,quad_error
++    INTEGER(int64), INTENT(OUT) :: bytes
++    ngrid=grid_s;rin=rin_s;alpha=alpha_s;lz=lz_s;bytes=peak_s
++    ntlow=0;nthigh=0
++    IF (ALLOCATED(tl)) ntlow=SIZE(tl)
++    IF (ALLOCATED(xh)) nthigh=SIZE(xh)
++    maxmode=mmax_s;quad_error=quaderr_s
++  END SUBROUTINE
++
++  SUBROUTINE wlayer_init(aprim,mesh,model,kappa,epsilon_r,r0,gate_d,z0,normal,tol,ngrid,ierr,message)
++    REAL(dp), INTENT(IN) :: aprim(3,3),kappa,epsilon_r,r0,gate_d,z0,normal(3),tol
++    INTEGER, INTENT(IN) :: mesh(3),model,ngrid(3)
++    INTEGER, INTENT(OUT) :: ierr
++    CHARACTER(*), INTENT(OUT) :: message
++    REAL(dp) :: n(3),c(3),a1(3),a2(3),br1(3),br2(3),vec(3),rr,nn,det,first,bandwidth,ab1(3),ab2(3)
++    REAL(dp), ALLOCATABLE :: dist(:,:)
++    COMPLEX(dp), ALLOCATABLE :: work(:,:)
++    INTEGER :: ng(2),i,j,k,stat
++    INTEGER(int64) :: need
++    ierr=0;message=''
++    IF (.NOT.ALL(ieee_is_finite(aprim)).OR..NOT.ALL(ieee_is_finite(normal)).OR. &
++        .NOT.ALL(ieee_is_finite([kappa,epsilon_r,r0,gate_d,z0,tol]))) THEN
++      ierr=1;message='Layered kernel parameters and lattice must be finite';RETURN
++    ENDIF
++    IF (model<0.OR.model>4.OR.ANY(mesh<1).OR.mesh(3)/=1.OR.kappa<0.OR.r0<0.OR.epsilon_r<=0.OR. &
++        tol<=0.OR.tol>1e-2_dp) THEN
++      ierr=1;message='Invalid layered model, mesh, screening, permittivity or tolerance';RETURN
++    ENDIF
++    c=aprim(:,3);nn=NORM2(c)
++    IF (nn<=0) THEN
++      ierr=1;message='Layered kernel requires a nonzero normal lattice vector';RETURN
++    ENDIF
++    n=c/nn
++    IF (SUM(normal*normal)>0) THEN
++      vec=normal/MAXVAL(ABS(normal));vec=vec/SQRT(SUM(vec*vec))
++      IF (ABS(ABS(DOT_PRODUCT(vec,n))-1)>1e-10_dp) THEN
++        ierr=1;message='WINT_NORMAL must be parallel to the third lattice vector';RETURN
++      ENDIF
++      n=vec
++    ENDIF
++    IF (MAXVAL(ABS(MATMUL(TRANSPOSE(aprim(:,1:2)),n)))> &
++        1e-10_dp*MAXVAL(ABS(aprim))) THEN
++      ierr=1;message='SLAB_WS requires the third lattice vector perpendicular to the in-plane lattice';RETURN
++    ENDIF
++    IF (model==4.AND.gate_d<=0.5_dp*nn) THEN
++      ierr=1;message='Both gate planes must enclose the entire centered normal integration cell';RETURN
++    ENDIF
++    ng=ngrid(1:2)
++    WHERE(ng==0) ng=16
++    IF (ANY(ng<16).OR.ANY(IAND(ng,ng-1)/=0)) THEN
++      ierr=1;message='Layered WS plane grids must be powers of two, at least 16';RETURN
++    ENDIF
++    IF (ANY(INT(ng,int64)>memory_limit/(8_int64*24_int64*16_int64))) THEN
++      ierr=2;message='Layered plane dimensions exceed minimum workspace';RETURN
++    ENDIF
++    IF (ready) THEN
++      IF (ALL(a_s==aprim).AND.ALL(mesh_s==mesh).AND.model_s==model.AND.kappa_s==kappa.AND. &
++          eps_s==epsilon_r.AND.r0_s==r0.AND.d_s==gate_d.AND.z0_s==z0.AND.tol_s==tol.AND. &
++          ALL(override_s==ngrid(1:2)).AND.ALL(normal_s==n)) RETURN
++    ENDIF
++    CALL wlayer_reset()
++    a_s=aprim;mesh_s=mesh;model_s=model;kappa_s=kappa;eps_s=epsilon_r;r0_s=r0;d_s=gate_d
++    z0_s=z0;tol_s=tol;grid_s=ng;override_s=ngrid(1:2);normal_s=n;lz_s=nn
++    zsign_s=SIGN(1._dp,DOT_PRODUCT(n,c))
++    a1=aprim(:,1)*REAL(mesh(1),dp);a2=aprim(:,2)*REAL(mesh(2),dp)
++    area_s=SQRT(SUM(cross(a1,a2)**2))
++    det=DOT_PRODUCT(aprim(:,1),cross(aprim(:,2),n))
++    IF (ABS(det)<=TINY(1._dp).OR.area_s<=0) THEN
++      ierr=1;message='Singular layered plane lattice';RETURN
++    ENDIF
++    b_s(:,1)=cross(aprim(:,2),n)/det
++    b_s(:,2)=cross(n,aprim(:,1))/det
++    br1=a1;br2=a2
++    CALL reduce2(br1,br2,ierr)
++    IF (ierr/=0) THEN
++      message='Could not reduce layered plane lattice';RETURN
++    ENDIF
++    rin_s=0.5_dp*SQRT(shortest2(br1,br2))*(1-64*EPSILON(1._dp))
++    alpha_s=SQRT(-LOG(MAX(TINY(1._dp),MIN(1e-13_dp,tol*1e-3_dp))))/MIN(rin_s,lz_s/2)
++    IF (.NOT.ieee_is_finite(alpha_s)) THEN
++      ierr=1;message='Layered geometry is outside floating point range';RETURN
++    ENDIF
++    bandwidth=2*alpha_s*SQRT(-LOG(tol_s))
++    DO i=1,2
++      vec=aprim(:,i)*REAL(mesh(i),dp)
++      DO WHILE(REAL(ng(i),dp)<=bandwidth*SQRT(SUM(vec*vec))/pi)
++        IF (ngrid(i)/=0) THEN
++          ierr=1;message='Layered WS plane grid does not contain the Gaussian bandwidth';RETURN
++        ENDIF
++        IF (ng(i)>1048576) THEN
++          ierr=2;message='Layered automatic plane grid exceeds workspace';RETURN
++        ENDIF
++        ng(i)=ng(i)*2
++      ENDDO
++    ENDDO
++    DO
++      ab1=2*pi*b_s(:,1)/REAL(mesh_s(1),dp)*REAL(ng(1),dp)
++      ab2=2*pi*b_s(:,2)/REAL(mesh_s(2),dp)*REAL(ng(2),dp)
++      CALL reduce2(ab1,ab2,ierr)
++      IF (ierr/=0) THEN
++        message='Could not certify layered reciprocal alias lattice';RETURN
++      ENDIF
++      IF (SQRT(shortest2(ab1,ab2))*(1-64*EPSILON(1._dp))/2>bandwidth) EXIT
++      IF (ALL(ngrid(1:2)/=0)) THEN
++        ierr=1;message='Layered WS grid fails the Cartesian Gaussian alias bound';RETURN
++      ENDIF
++      WHERE(ngrid(1:2)==0) ng=ng*2
++      IF (8_int64*INT(ng(1),int64)*INT(ng(2),int64)*24_int64>memory_limit) THEN
++        ierr=2;message='Layered automatic alias-safe grid exceeds workspace';RETURN
++      ENDIF
++    ENDDO
++    grid_s=ng
++    first=MIN(alpha_s,1/lz_s)
++    IF (r0_s>1/first) first=1/r0_s
++    IF (model_s==4) first=MIN(first,1/d_s)
++    CALL panels(first,alpha_s,tl,wl,ierr)
++    IF (ierr/=0) THEN
++      message='Layered low-t quadrature exceeds supported workspace';RETURN
++    ENDIF
++    need=8_int64*INT(ng(1),int64)*INT(ng(2),int64)*INT(SIZE(tl),int64)+ &
++         24_int64*INT(ng(1),int64)*INT(ng(2),int64)+ &
++         16_int64*INT(SIZE(tl),int64)+16777216_int64
++    IF (need>memory_limit) THEN
++      ierr=2;message='Layered plane construction exceeds 512 MiB additional workspace';CALL wlayer_reset();RETURN
++    ENDIF
++    peak_s=MAX(peak_s,need)
++    ALLOCATE(plane(ng(1),ng(2),SIZE(tl)),dist(ng(1),ng(2)),work(ng(1),ng(2)),STAT=stat)
++    IF (stat/=0) THEN
++      ierr=2;message='Layered plane allocation failed';CALL wlayer_reset();RETURN
++    ENDIF
++    DO j=1,ng(2)
++      DO i=1,ng(1)
++        vec=REAL(i-1,dp)/ng(1)*a1+REAL(j-1,dp)/ng(2)*a2
++        dist(i,j)=nearest2(vec,br1,br2)
++      ENDDO
++    ENDDO
++    DO k=1,SIZE(tl)
++      work=CMPLX(EXP(-tl(k)**2*dist),0._dp,dp)
++      DO j=1,ng(2)
++        CALL fft1(work(:,j))
++      ENDDO
++      DO i=1,ng(1)
++        CALL fft1(work(i,:))
++      ENDDO
++      plane(:,:,k)=REAL(work,dp)*(area_s/REAL(INT(ng(1),int64)*INT(ng(2),int64),dp))
++    ENDDO
++    bytes_s=8_int64*SIZE(plane,kind=int64)+16_int64*SIZE(tl,kind=int64)+16777216_int64
++    ready=.true.
++  END SUBROUTINE
++
++  SUBROUTINE panels(first,last,x,w,ierr)
++    REAL(dp), INTENT(IN) :: first,last
++    REAL(dp), ALLOCATABLE, INTENT(OUT) :: x(:),w(:)
++    INTEGER, INTENT(OUT) :: ierr
++    REAL(dp) :: edges(2049),a,b,xx(panel_order),ww(panel_order)
++    INTEGER :: n,k,p
++    ierr=0
++    IF (first<=0.OR.last<=0.OR..NOT.ieee_is_finite(first).OR..NOT.ieee_is_finite(last)) THEN
++      ierr=2;RETURN
++    ENDIF
++    edges(1)=0;edges(2)=MIN(first,last);n=2
++    DO WHILE(edges(n)<last)
++      IF (n>=2049) THEN
++        ierr=2;RETURN
++      ENDIF
++      b=MIN(last,edges(n)*2)
++      IF (b<=edges(n)) THEN
++        ierr=2;RETURN
++      ENDIF
++      n=n+1;edges(n)=b
++    ENDDO
++    ALLOCATE(x((n-1)*panel_order),w((n-1)*panel_order))
++    CALL legendre(panel_order,xx,ww)
++    DO k=1,n-1
++      a=edges(k);b=edges(k+1);p=(k-1)*panel_order
++      x(p+1:p+panel_order)=0.5_dp*((b-a)*xx+(b+a))
++      w(p+1:p+panel_order)=0.5_dp*(b-a)*ww
++    ENDDO
++  END SUBROUTINE
++
++  SUBROUTINE ensure_modes(mmax,qmax,ierr,message)
++    INTEGER, INTENT(IN) :: mmax
++    REAL(dp), INTENT(IN) :: qmax
++    INTEGER, INTENT(OUT) :: ierr
++    CHARACTER(*), INTENT(OUT) :: message
++    REAL(dp) :: first,last,scale
++    INTEGER :: i,j,k,n,stat
++    INTEGER(int64) :: need
++    ierr=0;message=''
++    IF (.NOT.ready) THEN
++      ierr=1;message='Layered context is not initialized';RETURN
++    ENDIF
++    IF (mmax<0.OR.mmax>4096.OR.qmax<0.OR..NOT.ieee_is_finite(qmax)) THEN
++      ierr=2;message='Layered Fourier extent is unsupported';RETURN
++    ENDIF
++    IF (mmax_s==mmax.AND.qmax<=qmax_s.AND.ALLOCATED(mt)) RETURN
++    IF (ALLOCATED(mt)) DEALLOCATE(mt)
++    IF (ALLOCATED(xh)) DEALLOCATE(xh,wh)
++    mmax_s=-1;qmax_s=-1
++    bytes_s=8_int64*SIZE(plane,kind=int64)+16_int64*SIZE(tl,kind=int64)+16777216_int64
++    scale=MAX(alpha_s,qmax,kappa_s,2*pi*REAL(mmax,dp)/lz_s,1/lz_s)
++    first=1/scale;last=1/alpha_s
++    IF (r0_s>0) first=MIN(first,r0_s)
++    IF (model_s==4) first=MIN(first,2*d_s-lz_s)
++    CALL panels(first,last,xh,wh,ierr)
++    IF (ierr/=0) THEN
++      message='Layered high-t quadrature is outside supported range';RETURN
++    ENDIF
++    IF (ANY(xh<1/HUGE(1._dp))) THEN
++      ierr=2;message='Layered quadrature is outside representable reciprocal range';RETURN
++    ENDIF
++    n=2*mmax+1
++    need=bytes_s+reserve_input_s+16_int64*SIZE(xh,kind=int64)+ &
++         8_int64*INT(n,int64)*INT(n,int64)*INT(SIZE(tl)+SIZE(xh),int64)+ &
++         64_int64*INT(n,int64)*INT(n,int64)+1048576_int64
++    IF (need>memory_limit) THEN
++      ierr=2;message='Layered normal projection exceeds 512 MiB additional workspace';RETURN
++    ENDIF
++    peak_s=MAX(peak_s,need)
++    ALLOCATE(mt(-mmax:mmax,-mmax:mmax,SIZE(tl)+SIZE(xh)),STAT=stat)
++    IF (stat/=0) THEN
++      ierr=2;message='Layered normal projection allocation failed';RETURN
++    ENDIF
++    DO k=1,SIZE(tl)
++      CALL wlayer_normal(tl(k),mmax,mt(:,:,k),ierr,message)
++      IF (ierr/=0) RETURN
++      mt(:,:,k)=mt(:,:,k)*(2/sqrtpi)*wl(k)/eps_s
++    ENDDO
++    DO k=1,SIZE(xh)
++      CALL wlayer_normal(1/xh(k),mmax,mt(:,:,SIZE(tl)+k),ierr,message)
++      IF (ierr/=0) RETURN
++      ! dt=dx/x² cancels the x² in the analytic plane Gaussian.
++      mt(:,:,SIZE(tl)+k)=mt(:,:,SIZE(tl)+k)*(2*sqrtpi)*wh(k)/eps_s
++    ENDDO
++    bytes_s=8_int64*SIZE(plane,kind=int64)+16_int64*(SIZE(tl,kind=int64)+SIZE(xh,kind=int64))+ &
++         8_int64*SIZE(mt,kind=int64)+16777216_int64
++    mmax_s=mmax;qmax_s=qmax
++  END SUBROUTINE
++
++  SUBROUTINE wlayer_normal(t,mmax,matrix,ierr,message)
++    REAL(dp), INTENT(IN) :: t
++    INTEGER, INTENT(IN) :: mmax
++    REAL(dp), INTENT(OUT) :: matrix(-mmax:mmax,-mmax:mmax)
++    INTEGER, INTENT(OUT) :: ierr
++    CHARACTER(*), INTENT(OUT) :: message
++    REAL(dp) :: s(-mmax:mmax),c(-mmax:mmax),ss(-mmax:mmax),cc(-mmax:mmax)
++    REAL(dp), ALLOCATABLE :: f0(:,:),fr(:,:)
++    REAL(dp) :: v(-mmax:mmax),eta,td,dg,coef,arg,kphase,aa,weight,ratio
++    INTEGER :: i,j,n,nn,lim
++    ierr=0;message='';matrix=0
++    IF (.NOT.ready.OR.t<=0.OR..NOT.ieee_is_finite(t).OR.mmax<0) THEN
++      ierr=1;message='Invalid normal projection query';RETURN
++    ENDIF
++    eta=t*lz_s
++    IF (.NOT.ieee_is_finite(eta)) THEN
++      ierr=1;message='Normal projection scale overflow';RETURN
++    ENDIF
++    IF (model_s==3) THEN
++      matrix(0,0)=lz_s*sheet_ratio(0._dp,r0_s,t)
++      RETURN
++    ENDIF
++    IF (model_s==4) THEN
++      td=t*d_s;dg=d_s/lz_s
++      IF (td<0.8_dp) THEN
++        lim=CEILING(4*td*tailcut/pi)
++        DO n=1,lim
++          weight=EXP(-(REAL(n,dp)*pi/(4*td))**2)*sqrtpi/td*lz_s
++          aa=REAL(n,dp)*pi/(2*dg)
++          DO i=-mmax,mmax
++            kphase=2*pi*REAL(i,dp)
++            IF (MOD(n,2)==1) THEN
++              v(i)=REAL(parity((n-1)/2),dp)*0.5_dp*(sinc((aa-kphase)/2)+sinc((aa+kphase)/2))
++            ELSE
++              v(i)=-REAL(parity(n/2),dp)*0.5_dp*(sinc((aa-kphase)/2)-sinc((aa+kphase)/2))
++            ENDIF
++          ENDDO
++          DO j=-mmax,mmax
++            matrix(:,j)=matrix(:,j)+weight*v*v(j)
++          ENDDO
++        ENDDO
++        RETURN
++      ENDIF
++      CALL gaussian_moments(eta,0._dp,mmax,s,c,ierr)
++      IF (ierr/=0) GOTO 90
++      ! Remaining images can be omitted once farther than tailcut Gaussian widths.
++      IF (dg<0.5_dp*(1+tailcut/eta)) THEN
++        IF (16_int64*INT(2*mmax+1,int64)**2+bytes_s>memory_limit) THEN
++          ierr=2;message='Gate normal matrices exceed the additional workspace budget';RETURN
++        ENDIF
++        ALLOCATE(f0(-mmax:mmax,-mmax:mmax),fr(-mmax:mmax,-mmax:mmax))
++        lim=CEILING((1+tailcut/eta)/(4*dg))+1
++        DO n=1,lim
++          CALL gaussian_moments(eta,4*REAL(n,dp)*dg,mmax,ss,cc,ierr)
++          s=s+ss;c=c+cc
++          CALL gaussian_moments(eta,-4*REAL(n,dp)*dg,mmax,ss,cc,ierr)
++          s=s+ss;c=c+cc
++        ENDDO
++        CALL difference_matrix(s,c,mmax,f0)
++        s=0;c=0
++        DO n=0,lim
++          CALL gaussian_moments(eta,(4*REAL(n,dp)+2)*dg,mmax,ss,cc,ierr)
++          s=s+ss;c=c+cc
++          CALL gaussian_moments(eta,-(4*REAL(n,dp)+2)*dg,mmax,ss,cc,ierr)
++          s=s+ss;c=c+cc
++        ENDDO
++        CALL difference_matrix(s,c,mmax,fr)
++        DO j=-mmax,mmax
++          matrix(:,j)=f0(:,j)-fr(:,-j)
++        ENDDO
++      ELSE
++        CALL difference_matrix(s,c,mmax,matrix)
++      ENDIF
++      RETURN
++    ENDIF
++    CALL gaussian_moments(eta,0._dp,mmax,s,c,ierr)
++    IF (ierr/=0) GOTO 90
++    CALL difference_matrix(s,c,mmax,matrix)
++    IF (model_s==2.AND.r0_s>0) THEN
++      CALL sheet_moments(t,mmax,s,c,ss,cc,ierr)
++      IF (ierr/=0) GOTO 90
++      DO j=-mmax,mmax
++        DO i=-mmax,mmax
++          coef=REAL(parity(i+j),dp)
++          IF (ABS(i)/=ABS(j)) THEN
++            matrix(i,j)=matrix(i,j)+4*lz_s*( &
++               REAL(i,dp)*(s(i)+coef*ss(i))-REAL(j,dp)*(s(j)+coef*ss(j)))/ &
++               (2*pi*REAL(i*i-j*j,dp))
++          ELSE IF (i/=0) THEN
++            matrix(i,j)=matrix(i,j)+2*lz_s*((s(i)+coef*ss(i))/(2*pi*REAL(i,dp))+c(i)+coef*cc(i))
++          ELSE
++            matrix(i,j)=matrix(i,j)+4*lz_s*(c(i)+cc(i))
++          ENDIF
++        ENDDO
++      ENDDO
++    ENDIF
++    IF (model_s==1.AND.kappa_s>0) THEN
++      IF (t<kappa_s/(2*tailcut)) THEN
++        matrix=0
++      ELSE
++        ratio=(kappa_s/t)/2
++        matrix=matrix*EXP(-ratio*ratio)
++      ENDIF
++    ENDIF
++    RETURN
++90  message='Normal Galerkin quadrature did not converge'
++  END SUBROUTINE
++
++  SUBROUTINE difference_matrix(s,c,mmax,mat)
++    INTEGER, INTENT(IN) :: mmax
++    REAL(dp), INTENT(IN) :: s(-mmax:mmax),c(-mmax:mmax)
++    REAL(dp), INTENT(OUT) :: mat(-mmax:mmax,-mmax:mmax)
++    INTEGER :: i,j
++    DO j=-mmax,mmax
++      DO i=-mmax,mmax
++        IF (i==j) THEN
++          mat(i,j)=2*lz_s*c(i)
++        ELSE
++          mat(i,j)=2*lz_s*REAL(parity(j-i+1),dp)*(s(j)-s(i))/(2*pi*REAL(j-i,dp))
++        ENDIF
++      ENDDO
++    ENDDO
++  END SUBROUTINE
++
++  SUBROUTINE gaussian_moments(eta,shift,mmax,s,c,ierr)
++    REAL(dp), INTENT(IN) :: eta,shift
++    INTEGER, INTENT(IN) :: mmax
++    REAL(dp), INTENT(OUT) :: s(-mmax:mmax),c(-mmax:mmax)
++    INTEGER, INTENT(OUT) :: ierr
++    REAL(dp) :: lo,hi,err,ss(-mmax:mmax),cc(-mmax:mmax),threshold
++    INTEGER :: n
++    ierr=0;s=0;c=0
++    lo=MAX(0._dp,-shift-tailcut/eta);hi=MIN(1._dp,-shift+tailcut/eta)
++    IF (hi<=lo) RETURN
++    n=MAX(24,CEILING(2*REAL(mmax,dp)*(hi-lo))+16)
++    CALL gaussian_once(n,lo,hi,eta,shift,mmax,s,c)
++    threshold=MAX(3e-14_dp,tol_s*1e-4_dp)
++    DO
++      n=n*2
++      IF (n>2048) THEN
++        ierr=3;RETURN
++      ENDIF
++      CALL gaussian_once(n,lo,hi,eta,shift,mmax,ss,cc)
++      err=MAX(MAXVAL(ABS(ss-s)),MAXVAL(ABS(cc-c)))
++      s=ss;c=cc
++      IF (err<=threshold) EXIT
++    ENDDO
++    quaderr_s=MAX(quaderr_s,err)
++  END SUBROUTINE
++
++  SUBROUTINE gaussian_once(n,lo,hi,eta,shift,mmax,s,c)
++    INTEGER, INTENT(IN) :: n,mmax
++    REAL(dp), INTENT(IN) :: lo,hi,eta,shift
++    REAL(dp), INTENT(OUT) :: s(-mmax:mmax),c(-mmax:mmax)
++    REAL(dp) :: xx(n),ww(n),u,w,co,si,cn,sn,ct
++    INTEGER :: j,m
++    CALL legendre(n,xx,ww);s=0;c=0
++    DO j=1,n
++      u=(hi+lo+(hi-lo)*xx(j))/2
++      w=ww(j)*(hi-lo)/2*EXP(-(eta*(u+shift))**2)
++      co=COS(2*pi*u);si=SIN(2*pi*u);cn=1;sn=0
++      DO m=0,mmax
++        s(m)=s(m)+w*sn;c(m)=c(m)+w*(1-u)*cn
++        ct=cn*co-sn*si;sn=sn*co+cn*si;cn=ct
++      ENDDO
++    ENDDO
++    DO m=1,mmax
++      s(-m)=-s(m);c(-m)=c(m)
++    ENDDO
++  END SUBROUTINE
++
++  SUBROUTINE sheet_moments(t,mmax,s,c,sr,cr,ierr)
++    REAL(dp), INTENT(IN) :: t
++    INTEGER, INTENT(IN) :: mmax
++    REAL(dp), INTENT(OUT) :: s(-mmax:mmax),c(-mmax:mmax),sr(-mmax:mmax),cr(-mmax:mmax)
++    INTEGER, INTENT(OUT) :: ierr
++    REAL(dp) :: eta,hi,ss(-mmax:mmax),cc(-mmax:mmax),ssr(-mmax:mmax),ccr(-mmax:mmax),err
++    INTEGER :: n
++    eta=t*lz_s;hi=MIN(.5_dp,tailcut/eta)
++    n=MAX(24,CEILING(2*REAL(mmax,dp)*hi)+16)
++    CALL sheet_once(n,hi,t,mmax,s,c,sr,cr)
++    DO
++      n=n*2
++      IF (n>2048) THEN
++        ierr=3;RETURN
++      ENDIF
++      CALL sheet_once(n,hi,t,mmax,ss,cc,ssr,ccr)
++      err=MAX(MAXVAL(ABS(ss-s)),MAXVAL(ABS(cc-c)),MAXVAL(ABS(ssr-sr)),MAXVAL(ABS(ccr-cr)))
++      s=ss;c=cc;sr=ssr;cr=ccr
++      IF (err<=MAX(3e-14_dp,tol_s*1e-4_dp)) EXIT
++    ENDDO
++    quaderr_s=MAX(quaderr_s,err)
++    ierr=0
++  END SUBROUTINE
++
++  SUBROUTINE sheet_once(n,hi,t,mmax,s,c,sr,cr)
++    INTEGER, INTENT(IN) :: n,mmax
++    REAL(dp), INTENT(IN) :: hi,t
++    REAL(dp), INTENT(OUT) :: s(-mmax:mmax),c(-mmax:mmax),sr(-mmax:mmax),cr(-mmax:mmax)
++    REAL(dp) :: xx(n),ww(n),u,w,f,fr,co,si,cn,sn,ct,v
++    INTEGER :: j,m
++    CALL legendre(n,xx,ww);s=0;c=0;sr=0;cr=0
++    DO j=1,n
++      u=hi*(1+xx(j))/2;w=hi*ww(j)/2
++      v=t*lz_s*u;f=EXP(-v*v)*sheet_minus_one(v,r0_s,t)
++      v=t*lz_s*(1-u)
++      IF (v>tailcut) THEN
++        fr=0
++      ELSE
++        fr=EXP(-v*v)*sheet_minus_one(v,r0_s,t)
++      ENDIF
++      co=COS(2*pi*u);si=SIN(2*pi*u);cn=1;sn=0
++      DO m=0,mmax
++        s(m)=s(m)+w*f*sn;c(m)=c(m)+w*f*u*cn
++        sr(m)=sr(m)+w*fr*sn;cr(m)=cr(m)+w*fr*u*cn
++        ct=cn*co-sn*si;sn=sn*co+cn*si;cn=ct
++      ENDDO
++    ENDDO
++    DO m=1,mmax
++      s(-m)=-s(m);c(-m)=c(m);sr(-m)=-sr(m);cr(-m)=cr(m)
++    ENDDO
++  END SUBROUTINE
++
++  REAL(dp) FUNCTION sheet_ratio(v,r0,t) RESULT(r)
++    REAL(dp), INTENT(IN) :: v,r0,t
++    REAL(dp) :: b,x,den,w
++    IF (r0==0) THEN
++      r=1;RETURN
++    ENDIF
++    IF (r0>HUGE(1._dp)/t) THEN
++      r=0;RETURN
++    ENDIF
++    b=r0*t
++    IF (b==0) THEN
++      r=1;RETURN
++    ENDIF
++    den=1+2*b*v
++    x=HUGE(1._dp)
++    IF (b>=.02_dp) x=v+0.5_dp/b
++    IF (x>25) THEN
++      w=(2*b/den)**2
++      r=(1+erfc_series_minus_one(w))/den
++    ELSE
++      r=sqrtpi/(2*b)*ERFC_SCALED(x)
++    ENDIF
++  END FUNCTION
++
++  REAL(dp) FUNCTION sheet_minus_one(v,r0,t) RESULT(r)
++    REAL(dp), INTENT(IN) :: v,r0,t
++    REAL(dp) :: b,x,den,w
++    IF (r0==0) THEN
++      r=0;RETURN
++    ENDIF
++    IF (r0>HUGE(1._dp)/t) THEN
++      r=-1;RETURN
++    ENDIF
++    b=r0*t
++    IF (b==0) THEN
++      r=0;RETURN
++    ENDIF
++    den=1+2*b*v
++    x=HUGE(1._dp)
++    IF (b>=.02_dp) x=v+0.5_dp/b
++    IF (x>25) THEN
++      w=(2*b/den)**2
++      r=-2*b*v/den+erfc_series_minus_one(w)/den
++    ELSE
++      r=sqrtpi/(2*b)*ERFC_SCALED(x)-1
++    ENDIF
++  END FUNCTION
++
++  REAL(dp) FUNCTION erfc_series_minus_one(w) RESULT(r)
++    REAL(dp), INTENT(IN) :: w
++    REAL(dp) :: term
++    INTEGER :: k
++    r=0;term=1
++    DO k=1,20
++      term=-term*REAL(2*k-1,dp)*w/2
++      r=r+term
++      IF (ABS(term)<EPSILON(1._dp)*MAX(ABS(r),TINY(1._dp))) EXIT
++    ENDDO
++  END FUNCTION
++
++  SUBROUTINE wlayer_block(ig,qfrac,scale,matrix,ierr,message)
++    INTEGER, INTENT(IN) :: ig(:,:)
++    REAL(dp), INTENT(IN) :: qfrac(3),scale
++    COMPLEX(dp), INTENT(OUT) :: matrix(:,:)
++    INTEGER, INTENT(OUT) :: ierr
++    CHARACTER(*), INTENT(OUT) :: message
++    REAL(dp), ALLOCATABLE :: weights(:),mat(:,:)
++    REAL(dp) :: qv(3),q2,x,p(2),phase
++    INTEGER :: modes(2),ix(2),mmax,n,k,i,j,ii,jj,nt
++    INTEGER(int64) :: need
++    ierr=0;message='';matrix=0
++    IF (.NOT.ready.OR.SIZE(ig,1)/=3.OR.SIZE(ig,2)/=SIZE(matrix,1).OR. &
++        SIZE(matrix,1)/=SIZE(matrix,2).OR..NOT.ALL(ieee_is_finite(qfrac)).OR. &
++        .NOT.ieee_is_finite(scale).OR.ABS(qfrac(3))>1e-10_dp) THEN
++      ierr=1;message='Invalid layered block shape, transfer or scale';RETURN
++    ENDIF
++    n=SIZE(ig,2)
++    IF (n==0) RETURN
++    IF (ANY(ig(1,:)/=ig(1,1)).OR.ANY(ig(2,:)/=ig(2,1))) THEN
++      ierr=1;message='Layered operator block mixes in-plane G vectors';RETURN
++    ENDIF
++    qv=2*pi*MATMUL(b_s,REAL(ig(1:2,1),dp)+qfrac(1:2));q2=SUM(qv*qv)
++    p=(REAL(ig(1:2,1),dp)+qfrac(1:2))*REAL(mesh_s(1:2),dp)
++    IF (MAXVAL(ABS(p))>1e9_dp) THEN
++      ierr=1;message='Layered reciprocal transfer is outside integer range';RETURN
++    ENDIF
++    modes=NINT(p)
++    IF (MAXVAL(ABS(p-REAL(modes,dp)))>1e-7_dp) THEN
++      ierr=1;message='Layered transfer is not commensurate with the in-plane mesh';RETURN
++    ENDIF
++    mmax=MAXVAL(ABS(ig(3,:)))
++    CALL ensure_modes(MAX(mmax,mmax_s),MAX(SQRT(q2),qmax_s),ierr,message)
++    IF (ierr/=0) RETURN
++    nt=SIZE(tl)+SIZE(xh)
++    need=bytes_s+reserve_input_s+8_int64*SIZE(mt,kind=int64)+8_int64*INT(2*mmax_s+1,int64)**2+16_int64*INT(n,int64)**2+8_int64*INT(nt,int64)
++    IF (need>memory_limit) THEN
++      ierr=2;message='Layered operator block exceeds workspace cap';RETURN
++    ENDIF
++    peak_s=MAX(peak_s,need)
++    ALLOCATE(weights(nt),mat(-mmax_s:mmax_s,-mmax_s:mmax_s))
++    weights=0
++    IF (.NOT.ANY(ABS(modes)>=grid_s/2)) THEN
++      ix=MODULO(modes,grid_s)+1
++      weights(1:SIZE(tl))=plane(ix(1),ix(2),:)
++    ENDIF
++    DO k=1,SIZE(xh)
++      x=SQRT(q2)*xh(k)/2
++      IF (x<tailcut) weights(SIZE(tl)+k)=EXP(-x*x)
++    ENDDO
++    CALL DGEMV('N',(2*mmax_s+1)**2,nt,1._dp,mt,(2*mmax_s+1)**2,weights,1,0._dp,mat,1)
++    DO j=1,n
++      jj=NINT(zsign_s*REAL(ig(3,j),dp))
++      DO i=1,n
++        ii=NINT(zsign_s*REAL(ig(3,i),dp))
++        phase=2*pi*REAL(jj-ii,dp)*MODULO(z0_s,lz_s)/lz_s
++        matrix(i,j)=scale*mat(ii,jj)*CMPLX(COS(phase),SIN(phase),dp)
++      ENDDO
++    ENDDO
++    IF (.NOT.ALL(ieee_is_finite(REAL(matrix,dp))).OR..NOT.ALL(ieee_is_finite(AIMAG(matrix)))) THEN
++      ierr=3;message='Layered operator block is nonfinite';matrix=0
++    ENDIF
++  END SUBROUTINE
++
++  SUBROUTINE wlayer_apply(ig,qfrac,density,scale,result,ierr,message,audit_unit)
++    INTEGER, INTENT(IN) :: ig(:,:)
++    REAL(dp), INTENT(IN) :: qfrac(3),scale
++    COMPLEX(dp), INTENT(IN) :: density(:,:)
++    COMPLEX(dp), INTENT(OUT) :: result(:,:)
++    INTEGER, INTENT(OUT) :: ierr
++    CHARACTER(*), INTENT(OUT) :: message
++    INTEGER, OPTIONAL, INTENT(IN) :: audit_unit
++    INTEGER, ALLOCATABLE :: order(:),subg(:,:)
++    COMPLEX(dp), ALLOCATABLE :: op(:,:),d(:,:),v(:,:)
++    INTEGER :: n,np,i,j,start,finish,ngroup,mmax,stat,largest
++    REAL(dp) :: qv(3),qmax
++    INTEGER(int64) :: need
++    ierr=0;message='';result=0;n=SIZE(ig,2);np=SIZE(density,2)
++    reserve_input_s=12_int64*INT(n,int64)
++    IF (.NOT.ready.OR.SIZE(ig,1)/=3.OR.SIZE(density,1)/=n.OR. &
++        ANY(SHAPE(result)/=SHAPE(density)).OR..NOT.ALL(ieee_is_finite(qfrac)).OR. &
++        ABS(qfrac(3))>1e-10_dp.OR..NOT.ieee_is_finite(scale)) THEN
++      ierr=1;message='Invalid layered density shape, transfer or scale';reserve_input_s=0;RETURN
++    ENDIF
++    DO j=1,np
++      DO i=1,n
++        IF (.NOT.ieee_is_finite(REAL(density(i,j),dp)).OR..NOT.ieee_is_finite(AIMAG(density(i,j)))) THEN
++          ierr=1;message='Layered density contains nonfinite values';reserve_input_s=0;RETURN
++        ENDIF
++      ENDDO
++    ENDDO
++    IF (n==0.OR.np==0) THEN
++      IF (PRESENT(audit_unit)) WRITE(audit_unit) INT(0,int32)
++      reserve_input_s=0;RETURN
++    ENDIF
++    qmax=0
++    DO i=1,n
++      qv=2*pi*MATMUL(b_s,REAL(ig(1:2,i),dp)+qfrac(1:2))
++      qmax=MAX(qmax,SQRT(SUM(qv*qv)))
++    ENDDO
++    mmax=MAXVAL(ABS(ig(3,:)))
++    CALL ensure_modes(mmax,qmax,ierr,message)
++    IF (ierr/=0) THEN
++      reserve_input_s=0;RETURN
++    ENDIF
++    IF (bytes_s+reserve_input_s+8_int64*INT(n,int64)>memory_limit) THEN
++      ierr=2;message='Layered G grouping exceeds workspace';reserve_input_s=0;RETURN
++    ENDIF
++    ALLOCATE(order(n),STAT=stat)
++    IF (stat/=0) THEN
++      ierr=2;message='Layered grouping allocation failed';reserve_input_s=0;RETURN
++    ENDIF
++    order=[(i,i=1,n)]
++    CALL sort_indices(order,ig,1,n)
++    ngroup=1;largest=1;start=1
++    DO i=2,n
++      IF (ALL(ig(:,order(i))==ig(:,order(i-1)))) THEN
++        ierr=1;message='Duplicate G vector in layered density';reserve_input_s=0;RETURN
++      ENDIF
++      IF (ANY(ig(1:2,order(i))/=ig(1:2,order(i-1)))) THEN
++        ngroup=ngroup+1;largest=MAX(largest,i-start);start=i
++      ENDIF
++    ENDDO
++    largest=MAX(largest,n-start+1)
++    need=bytes_s+reserve_input_s+8_int64*INT(n,int64)+32_int64*INT(largest,int64)**2+ &
++      64_int64*INT(largest,int64)*INT(np,int64)+12_int64*INT(largest,int64)+ &
++      8_int64*INT(2*mmax_s+1,int64)**2+8_int64*INT(SIZE(tl)+SIZE(xh),int64)+ &
++      8_int64*SIZE(mt,kind=int64)
++    IF (need>memory_limit) THEN
++      ierr=2;message='Layered application exceeds 512 MiB additional workspace';reserve_input_s=0;RETURN
++    ENDIF
++    peak_s=MAX(peak_s,need)
++    IF (PRESENT(audit_unit)) WRITE(audit_unit) INT(ngroup,int32)
++    start=1
++    DO WHILE(start<=n)
++      finish=start
++      DO WHILE(finish<n)
++        IF (ANY(ig(1:2,order(finish+1))/=ig(1:2,order(start)))) EXIT
++        finish=finish+1
++      ENDDO
++      j=finish-start+1
++      ALLOCATE(op(j,j),subg(3,j),d(j,np),v(j,np))
++      DO i=1,j
++        subg(:,i)=ig(:,order(start+i-1))
++      ENDDO
++      DO ngroup=1,np
++        DO i=1,j
++          d(i,ngroup)=density(order(start+i-1),ngroup)
++        ENDDO
++      ENDDO
++      CALL wlayer_block(subg,qfrac,scale,op,ierr,message)
++      IF (ierr/=0) THEN
++      reserve_input_s=0;RETURN
++    ENDIF
++      CALL ZGEMM('N','N',j,np,j,CMPLX(1._dp,0._dp,dp),op,j,d,j,CMPLX(0._dp,0._dp,dp),v,j)
++      DO ngroup=1,np
++        DO i=1,j
++          result(order(start+i-1),ngroup)=v(i,ngroup)
++        ENDDO
++      ENDDO
++      IF (PRESENT(audit_unit)) THEN
++        WRITE(audit_unit) INT(j,int32),INT(order(start:finish),int32),op
++      ENDIF
++      DEALLOCATE(op,subg,d,v)
++      start=finish+1
++    ENDDO
++    reserve_input_s=0
++  END SUBROUTINE
++
++  RECURSIVE SUBROUTINE sort_indices(idx,g,lo,hi)
++    INTEGER, INTENT(INOUT) :: idx(:)
++    INTEGER, INTENT(IN) :: g(:,:),lo,hi
++    INTEGER :: i,j,p,tmp
++    IF (lo>=hi) RETURN
++    p=idx((lo+hi)/2);i=lo;j=hi
++    DO
++      DO WHILE(less(g(:,idx(i)),g(:,p)))
++        i=i+1
++      ENDDO
++      DO WHILE(less(g(:,p),g(:,idx(j))))
++        j=j-1
++      ENDDO
++      IF (i<=j) THEN
++        tmp=idx(i);idx(i)=idx(j);idx(j)=tmp;i=i+1;j=j-1
++      ENDIF
++      IF (i>j) EXIT
++    ENDDO
++    IF (lo<j) CALL sort_indices(idx,g,lo,j)
++    IF (i<hi) CALL sort_indices(idx,g,i,hi)
++  END SUBROUTINE
++
++  LOGICAL FUNCTION less(a,b)
++    INTEGER, INTENT(IN) :: a(3),b(3)
++    INTEGER :: i
++    less=.false.
++    DO i=1,3
++      IF (a(i)<b(i)) THEN
++        less=.true.;RETURN
++      ELSE IF (a(i)>b(i)) THEN
++        RETURN
++      ENDIF
++    ENDDO
++  END FUNCTION
++
++  RECURSIVE PURE SUBROUTINE reduce2(a,b,ierr)
++    REAL(dp), INTENT(INOUT) :: a(3),b(3)
++    INTEGER, INTENT(OUT) :: ierr
++    REAL(dp) :: tmp(3),aa,bb,mu
++    INTEGER :: i
++    ierr=0
++    DO i=1,256
++      aa=SUM(a*a);bb=SUM(b*b)
++      IF (aa<=0.OR.bb<=0) EXIT
++      IF (bb<aa) THEN
++        tmp=a;a=b;b=tmp;aa=SUM(a*a)
++      ENDIF
++      ! At a hexagonal tie ANINT(+/-1/2) alternates two equivalent bases.
++      ! Stop within roundoff; shortest2 independently certifies the metric
++      ! used by the real-space radius and reciprocal alias bound.
++      IF (ABS(DOT_PRODUCT(a,b))<=0.5_dp*aa*(1+8*EPSILON(1._dp))) RETURN
++      mu=ANINT(DOT_PRODUCT(a,b)/aa)
++      IF (mu==0) RETURN
++      b=b-mu*a
++    ENDDO
++    ierr=1
++  END SUBROUTINE
++
++  RECURSIVE PURE REAL(dp) FUNCTION shortest2(a,b) RESULT(rr)
++    REAL(dp), INTENT(IN) :: a(3),b(3)
++    REAL(dp) :: e(3),v(3),r11,r12,r22
++    INTEGER :: j,lim,n1
++    r11=NORM2(a);e=a/r11;r12=DOT_PRODUCT(e,b)
++    r22=NORM2(b-r12*e);rr=MIN(SUM(a*a),SUM(b*b))
++    ! QR bounds enumerate every vector shorter than the current candidate.
++    lim=FLOOR(SQRT(rr)/r22)+1
++    DO j=-lim,lim
++      IF (j==0) THEN
++        n1=1
++      ELSE
++        n1=NINT(-REAL(j,dp)*r12/r11)
++      ENDIF
++      v=REAL(n1,dp)*a+REAL(j,dp)*b;rr=MIN(rr,SUM(v*v))
++    ENDDO
++  END FUNCTION
++
++  REAL(dp) FUNCTION nearest2(x,a,b) RESULT(rr)
++    REAL(dp), INTENT(IN) :: x(3),a(3),b(3)
++    REAL(dp) :: e1(3),v2(3),r11,r12,r22,y1,y2,v(3),rad
++    INTEGER(int64) :: j,n1,j0,lo,hi
++    r11=SQRT(SUM(a*a));e1=a/r11;r12=DOT_PRODUCT(e1,b)
++    v2=b-r12*e1;r22=SQRT(SUM(v2*v2));v2=v2/r22
++    y1=DOT_PRODUCT(e1,x);y2=DOT_PRODUCT(v2,x);j0=NINT(y2/r22,kind=int64)
++    n1=NINT((y1-REAL(j0,dp)*r12)/r11,kind=int64)
++    v=x-REAL(n1,dp)*a-REAL(j0,dp)*b;rr=SUM(v*v)
++    rad=SQRT(MAX(0._dp,rr));lo=CEILING((y2-rad)/r22,kind=int64);hi=FLOOR((y2+rad)/r22,kind=int64)
++    DO j=lo,hi
++      n1=NINT((y1-REAL(j,dp)*r12)/r11,kind=int64)
++      v=x-REAL(n1,dp)*a-REAL(j,dp)*b;rr=MIN(rr,SUM(v*v))
++    ENDDO
++  END FUNCTION
++
++  FUNCTION cross(a,b) RESULT(c)
++    REAL(dp), INTENT(IN) :: a(3),b(3)
++    REAL(dp) :: c(3)
++    c=[a(2)*b(3)-a(3)*b(2),a(3)*b(1)-a(1)*b(3),a(1)*b(2)-a(2)*b(1)]
++  END FUNCTION
++
++  INTEGER FUNCTION parity(i)
++    INTEGER, INTENT(IN) :: i
++    parity=1
++    IF (MODULO(i,2)/=0) parity=-1
++  END FUNCTION
++
++  REAL(dp) FUNCTION sinc(x)
++    REAL(dp), INTENT(IN) :: x
++    IF (ABS(x)<1e-4_dp) THEN
++      sinc=1-x*x/6+x**4/120-x**6/5040
++    ELSE
++      sinc=SIN(x)/x
++    ENDIF
++  END FUNCTION
++
++  SUBROUTINE legendre(n,x,w)
++    INTEGER, INTENT(IN) :: n
++    REAL(dp), INTENT(OUT) :: x(n),w(n)
++    REAL(dp) :: z,zold,p1,p2,p3,pp
++    INTEGER :: i,j,it
++    DO i=1,(n+1)/2
++      z=COS(pi*(REAL(i,dp)-.25_dp)/(REAL(n,dp)+.5_dp))
++      DO it=1,64
++        p1=1;p2=0
++        DO j=1,n
++          p3=p2;p2=p1;p1=((2*j-1)*z*p2-(j-1)*p3)/j
++        ENDDO
++        pp=n*(z*p1-p2)/(z*z-1);zold=z;z=zold-p1/pp
++        IF (ABS(z-zold)<3e-16_dp) EXIT
++      ENDDO
++      x(i)=-z;x(n+1-i)=z;w(i)=2/((1-z*z)*pp*pp);w(n+1-i)=w(i)
++    ENDDO
++  END SUBROUTINE
++
++  SUBROUTINE fft1(a)
++    COMPLEX(dp), INTENT(INOUT) :: a(:)
++    INTEGER :: n,i,j,k,m,half,step
++    COMPLEX(dp) :: temp,u,w,wn
++    n=SIZE(a);j=1
++    DO i=1,n
++      IF (i<j) THEN
++        temp=a(i);a(i)=a(j);a(j)=temp
++      ENDIF
++      m=n/2
++      DO WHILE(m>=1)
++        IF (j<=m) EXIT
++        j=j-m;m=m/2
++      ENDDO
++      j=j+m
++    ENDDO
++    step=2
++    DO WHILE(step<=n)
++      half=step/2;wn=CMPLX(COS(2*pi/step),-SIN(2*pi/step),dp)
++      DO i=1,n,step
++        w=1
++        DO k=0,half-1
++          u=a(i+k);temp=w*a(i+k+half)
++          a(i+k)=u+temp;a(i+k+half)=u-temp;w=w*wn
++        ENDDO
++      ENDDO
++      step=step*2
++    ENDDO
++  END SUBROUTINE
++END MODULE wint_layered

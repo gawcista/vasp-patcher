@@ -1,0 +1,1287 @@
+diff --git a/src/.objects b/src/.objects
+index 6fc966a2317f3eb980286d52e49256e369b389ee..8621f10f7276a33fb413bdb7457a6a150929969c 100644
+--- a/src/.objects
++++ b/src/.objects
+@@ -40,6 +40,7 @@ SOURCE=\
+ 	minimax_struct.o \
+ 	locproj_struct.o \
+ 	msdgw_struct.o \
++	ws_coulomb.o \
+ 	fock_glb.o \
+ 	chi_glb.o \
+ 	smart_allocate.o \
+diff --git a/src/dmft.F b/src/dmft.F
+index 210085b30c7bb94142732fc23cd8b884a1fa21fc..fc479bcf3e01d57c4afb6c089fbb247cd87cbbee 100644
+--- a/src/dmft.F
++++ b/src/dmft.F
+@@ -416,6 +416,7 @@ MODULE dmft
+      USE mlwf
+      USE locproj
+      USE crpa, ONLY : CRPA_NUM_WAN
++     USE ws_coulomb, ONLY: ws_info
+ 
+      IMPLICIT NONE
+      TYPE(wavedes) WDES
+@@ -446,6 +447,9 @@ MODULE dmft
+      INTEGER NKPTS_IRZ
+      INTEGER LMAX_FOCKAE_STORE
+      REAL(q) :: EFERMI(WDES%ISPIN)
++     REAL(q) :: WS_ALPHA_LOCAL,WS_RIN_LOCAL,WS_VOLUME_LOCAL,WS_PAW_RADIUS
++     INTEGER :: WS_GRID_LOCAL(3)
++     INTEGER(KIND=8) :: WS_BYTES_LOCAL
+ 
+      GDEF, ALLOCATABLE :: CRIJKL(:,:,:,:)   !multi-centre Coulomb integrals
+      PROFILING_START( 'dmft_matrix_elements')
+@@ -468,6 +472,26 @@ MODULE dmft
+         W%EFERMI = EFERMI
+      ENDIF
+  
++     IF (WINT_CUTOFF_MODE==WINT_CUTOFF_WS) THEN
++        CALL WS_PREPARE_KERNEL(LATT_CUR,IO%IU6)
++        CALL ws_info(WS_GRID_LOCAL,WS_ALPHA_LOCAL,WS_RIN_LOCAL,WS_VOLUME_LOCAL,WS_BYTES_LOCAL)
++        WS_PAW_RADIUS=0._q
++        DO I=1,T_INFO%NTYP
++           IF (ASSOCIATED(P(I)%R%R)) THEN
++              WS_PAW_RADIUS=MAX(WS_PAW_RADIUS,P(I)%R%RMAX,P(I)%RDEP)
++           ENDIF
++        ENDDO
++        IF (ASSOCIATED(FAST_AUG_FOCK%PSRMAX)) &
++           WS_PAW_RADIUS=MAX(WS_PAW_RADIUS,MAXVAL(FAST_AUG_FOCK%PSRMAX))
++        IF (2*WS_PAW_RADIUS>=WS_RIN_LOCAL) &
++           CALL vtutor%error('WS cell is too small to retain the native bare PAW one-center correction')
++        IF (IO%IU6>=0) THEN
++           WRITE(IO%IU6,'(A,F14.7)') ' WS PAW local pair support bound [Angstrom]: ',2*WS_PAW_RADIUS
++           WRITE(IO%IU6,'(A)') ' WS PAW: local correction retained; augmentation pairs crossing WS faces require BvK mesh convergence'
++           WRITE(IO%IU6,'(A)') ' WS PAW: FFT refinement alone does not validate boundary-pair augmentation compensation'
++        ENDIF
++     ENDIF
++
+      !we need the projection matrices U_matrix and U_matrix_opt in the following
+      !so if they are not stored, determine them now
+      IF ( CRPA_NUM_WAN < 1) THEN
+@@ -1298,7 +1322,12 @@ MODULE dmft
+           NP =WGWQ%NGVECTOR
+ 
+           ! set the right potential in POTFAK
++          IF (WINT_CUTOFF_MODE==WINT_CUTOFF_WS) THEN
++             IF (ASSOCIATED(WPOTH)) CALL vtutor%error('WS cannot be replaced by an imported screened W potential')
++             CALL SET_GFAC_WAVEFUN_WS(WGWQ,LATT_CUR,POTFAK)
++          ELSE
+           CALL SET_GFAC_WAVEFUN(WGWQ, LATT_CUR, FSG_STORE(1), POTFAK ) ! FSG = FSG_STORE(1) or 0._q (convergence correction)?
++          ENDIF
+           ! or possibly read screened potential from file
+           IF (ASSOCIATED(WPOTH)) CALL GET_WPOT( WPOTH, NQ, POTFAK, LFULL)
+ 
+@@ -3356,6 +3385,11 @@ DO ISP2 =ISP1, WDES%ISPIN
+         ENDDO
+      ENDIF 
+ 
++     IF (WINT_CUTOFF_MODE==WINT_CUTOFF_WS) THEN
++        IF (.NOT.LVPOT.OR.LWPOT.OR.LCRPA.OR..NOT.L2E4W_ALL) &
++           CALL vtutor%error('WS requires native bare 2E4WA: LVPOT=T and LWPOT=F, without cRPA or WFULL import')
++     ENDIF
++
+      NWLOW=-1
+      CALL PROCESS_INCAR(.FALSE., IO%IU0, IO%IU5, 'NWLOW', NWLOW, IERR, WRITEXMLINCAR)
+ 
+diff --git a/src/fock.F b/src/fock.F
+index 2e1120c16f588791343a5b024bdd19a652e7a239..abd807a43432e135e40942cfdb18a85f09c73990 100644
+--- a/src/fock.F
++++ b/src/fock.F
+@@ -65,6 +65,7 @@ CONTAINS
+       USE tutor, ONLY: vtutor, isError, isAlert, isWarning, isAdvice, LHFOneCenter, ISYM2, &
+           NMAXFOCKAE, DeprENCUTFOCK, PRECFOCK, vdWKlimes, HFParam, OEPdouble, LIBXCWrongName
+       USE xc_family_name
++      USE chi_glb, ONLY: L2E4W_ALL, LCRPA
+ #ifdef USELIBXC
+       USE xc_f03_lib_m
+ #endif
+@@ -85,7 +86,7 @@ CONTAINS
+       LOGICAL :: LVTOT, LASPH, LNONCOLLINEAR
+       REAL(q) :: SAXIS(3)
+   ! local
+-      INTEGER IDUM, N, IERR
++      INTEGER IDUM, N, IERR, WS_INPUT_COUNT
+       REAL(q) RDUM
+       COMPLEX(q) CDUM
+       LOGICAL LOPEN,LDUM
+@@ -106,6 +107,9 @@ CONTAINS
+       HFSCREEN=0.0_q
+       HFSCREENC=0.0_q
+       HFRCUT=0.0_q
++      WINT_CUTOFF_MODE=WINT_CUTOFF_NATIVE
++      WS_TOL=1.0e-8_q
++      WS_NGRID=0
+       
+       LRSCOR=.FALSE.
+       LHFCALC=CALCULATE_RESPONSE_FUNCTIONS().OR.LDMATRIX()
+@@ -577,6 +581,14 @@ GPOMP !$OMP TARGET ENTER DATA MAP(ALLOC: CMBJ_TYP)
+ 
+       CALL PROCESS_INCAR(LOPEN, IU0, IU5, 'EVENONLY', EVENONLY, IERR, WRITEXMLINCAR)
+ 
++      ! Reserved WS input must never silently disappear in an ordinary PBE run.
++      IF (.NOT.LHFCALC) THEN
++         RDUM=0._q
++         CALL PROCESS_INCAR(LOPEN,IU0,IU5,'HFRCUT',RDUM,IERR,WRITEXMLINCAR)
++         IF (RDUM==-2._q.OR.COUNT_ELEMENTS(incar_f,'WS_TOL')>0.OR.COUNT_ELEMENTS(incar_f,'WS_NGRID')>0) &
++            CALL vtutor%error('HFRCUT=-2/WS controls are supported only for native bare ALGO=2E4WA')
++      ENDIF
++
+       IF (LHFCALC) THEN
+ !
+ ! read lowest band to be included in HF term
+@@ -690,6 +702,29 @@ GPOMP !$OMP TARGET ENTER DATA MAP(ALLOC: CMBJ_TYP)
+ ! truncate the potential kernel at a finite radius R
+ !
+          CALL PROCESS_INCAR(LOPEN, IU0, IU5, 'HFRCUT', HFRCUT, IERR, WRITEXMLINCAR)
++         IF (IERR/=0.AND.IERR/=not_found_error) CALL vtutor%error('Invalid HFRCUT input')
++         WS_INPUT_COUNT=0
++         CALL PROCESS_INCAR(LOPEN, IU0, IU5, 'WS_TOL', WS_TOL, IERR, WRITEXMLINCAR, FOUNDNUMBER=N)
++         IF (IERR/=0.AND.IERR/=not_found_error) CALL vtutor%error('Invalid WS_TOL input')
++         IF (N/=0.AND.N/=1) CALL vtutor%error('WS_TOL requires one real value')
++         WS_INPUT_COUNT=WS_INPUT_COUNT+N
++         CALL PROCESS_INCAR(LOPEN, IU0, IU5, 'WS_NGRID', WS_NGRID, 3, IERR, WRITEXMLINCAR, FOUNDNUMBER=N)
++         IF (IERR/=0.AND.IERR/=not_found_error) CALL vtutor%error('Invalid WS_NGRID input')
++         IF (N/=0.AND.N/=3) CALL vtutor%error('WS_NGRID requires three integer dimensions')
++         WS_INPUT_COUNT=WS_INPUT_COUNT+N
++         IF (HFRCUT==-2._q) THEN
++            IF (.NOT.L2E4W_ALL.OR.LCRPA) &
++               CALL vtutor%error('HFRCUT=-2 WS is supported only for native bare ALGO=2E4WA')
++            IF (HFSCREEN/=0._q.OR.L_THOMAS_FERMI.OR.LRHFCALC.OR.L_MODEL_HF.OR.EXXOEP/=0) &
++               CALL vtutor%error('WS Wannier integrals require bare Coulomb without screened/exchange model options')
++            IF (.NOT.(WS_TOL>=1.0e-14_q.AND.WS_TOL<0.1_q).OR.ANY(WS_NGRID<0)) &
++               CALL vtutor%error('WS requires 1e-14 <= WS_TOL < 0.1 and nonnegative WS_NGRID')
++            WINT_CUTOFF_MODE=WINT_CUTOFF_WS
++            ! Never allow the mode sentinel to enter legacy radius formulas.
++            HFRCUT=0._q
++         ELSEIF (WS_INPUT_COUNT>0) THEN
++            CALL vtutor%error('WS_TOL/WS_NGRID require HFRCUT=-2')
++         ENDIF
+ !
+ ! read in AEXX amount of exact exchange and AGGAX and/or MGGAX (default 1-AEXX)
+ !
+@@ -1994,6 +2029,88 @@ GPOMP !$OMP TARGET TEAMS DISTRIBUTE PARALLEL DO MAP(PRESENT,TO:GRID,POTFAK) IF(O
+ ! 
+ !**********************************************************************
+ 
++
++! Original private WS Wannier-integral entry; legacy Fock kernels are unchanged.
++    SUBROUTINE WS_PREPARE_KERNEL(LATT_CUR, IU6)
++      USE constant, ONLY: PI, EDEPS
++      USE lattice, ONLY: latt
++      USE full_kpoints, ONLY: KPOINTS_FULL, CHECK_FULL_KPOINTS
++      USE ws_coulomb, ONLY: ws_init, ws_get, ws_info
++      USE iso_fortran_env, ONLY: int64
++      USE tutor, ONLY: vtutor
++      IMPLICIT NONE
++      TYPE(latt), INTENT(IN) :: LATT_CUR
++      INTEGER, INTENT(IN) :: IU6
++      INTEGER :: NK(3), I, IERR, NG(3)
++      INTEGER(int64) :: BYTES
++      REAL(q) :: A(3,3), ALPHA, RIN, VOLUME, HEAD
++      CHARACTER(512) :: MSG
++      LOGICAL, SAVE :: REPORTED=.FALSE.
++      REAL(q), SAVE :: REPORTED_A(3,3)=0, REPORTED_TOL=0
++      INTEGER, SAVE :: REPORTED_GRID(3)=0
++
++      IF (WINT_CUTOFF_MODE/=WINT_CUTOFF_WS) &
++         CALL vtutor%error('WS kernel requested without HFRCUT=-2')
++      CALL CHECK_FULL_KPOINTS
++      NK=[KPOINTS_FULL%NKPX,KPOINTS_FULL%NKPY,KPOINTS_FULL%NKPZ]
++      IF (ANY(NK<1)) CALL vtutor%error('WS requires a regular automatic Gamma-centered k mesh')
++      IF (KPOINTS_FULL%NKPTS_NON_ZERO/=PRODUCT(NK)) &
++         CALL vtutor%error('WS requires a complete uniform three-dimensional mesh descriptor')
++      IF (NKREDX/=1.OR.NKREDY/=1.OR.NKREDZ/=1.OR.HFKIDENT.OR.SHIFTRED.OR.ODDONLY.OR.EVENONLY) &
++         CALL vtutor%error('WS Wannier integrals do not support Fock mesh reduction or shifted/odd/even grids')
++      IF (HFSCREEN/=0._q.OR.MODEL_GW/=0.OR.L_THOMAS_FERMI.OR.LRHFCALC.OR.L_MODEL_HF) &
++         CALL vtutor%error('WS Wannier integrals require the bare integral kernel')
++      IF (ABS(AEXX-1._q)>1.0e-12_q) CALL vtutor%error('WS Wannier integrals require full Coulomb strength AEXX=1')
++      DO I=1,3
++         A(:,I)=LATT_CUR%A(:,I)*REAL(NK(I),q)
++      ENDDO
++      CALL ws_init(A,WS_TOL,WS_NGRID,IERR,MSG)
++      IF (IERR/=0) CALL vtutor%error('WS construction failed: '//TRIM(MSG))
++      CALL ws_info(NG,ALPHA,RIN,VOLUME,BYTES)
++      IF (.NOT.REPORTED.OR.ANY(A/=REPORTED_A).OR.WS_TOL/=REPORTED_TOL.OR.ANY(WS_NGRID/=REPORTED_GRID)) THEN
++         IF (IU6>=0) THEN
++            CALL ws_get([0._q,0._q,0._q],HEAD,IERR)
++            IF (IERR/=0) CALL vtutor%error('WS head evaluation failed')
++            WRITE(IU6,'(A)') ' WANNIER_COULOMB_WS: HFRCUT=-2, full real-space BvK WS, bare Coulomb'
++            WRITE(IU6,'(A,3I8)') ' WS mesh: ',NK
++            WRITE(IU6,'(A,3I8)') ' WS FFT grid: ',NG
++            WRITE(IU6,'(A,ES16.8)') ' WS_TOL (MIC range/bandwidth control): ',WS_TOL
++            WRITE(IU6,'(A,ES16.8)') ' WS alpha [1/Angstrom]: ',ALPHA
++            WRITE(IU6,'(A,ES16.8)') ' WS inradius [Angstrom]: ',RIN
++            WRITE(IU6,'(A,ES16.8)') ' WS supercell volume [Angstrom^3]: ',VOLUME
++            WRITE(IU6,'(A,ES16.8)') ' WS head/(Omega*Nq) [eV]: ',HEAD*EDEPS/(4*PI*VOLUME)
++            WRITE(IU6,'(A,I18)') ' WS replicated cache [bytes/rank]: ',BYTES
++            DO I=1,3
++               WRITE(IU6,'(A,I1,A,3F18.9)') ' WS lattice vector ',I,' [Angstrom]: ',A(:,I)
++            ENDDO
++            WRITE(IU6,'(A)') ' WS mode: no old Ewald/FSG head; converge finite-density and WS-face errors with WS_NGRID'
++            REPORTED=.TRUE.; REPORTED_A=A; REPORTED_TOL=WS_TOL; REPORTED_GRID=WS_NGRID
++         ENDIF
++      ENDIF
++    END SUBROUTINE WS_PREPARE_KERNEL
++
++    SUBROUTINE SET_GFAC_WAVEFUN_WS(WDES1,LATT_CUR,POTFAK)
++      USE constant, ONLY: PI,TPI,EDEPS
++      USE wave, ONLY: wavedes1
++      USE lattice, ONLY: latt
++      USE ws_coulomb, ONLY: ws_get
++      USE tutor, ONLY: vtutor
++      IMPLICIT NONE
++      TYPE(wavedes1), INTENT(IN) :: WDES1
++      TYPE(latt), INTENT(IN) :: LATT_CUR
++      REAL(q), INTENT(OUT) :: POTFAK(WDES1%NGVECTOR)
++      REAL(q) :: QV(3), VALUE, SCALE_WS
++      INTEGER :: NI,IERR
++      CALL WS_PREPARE_KERNEL(LATT_CUR,-1)
++      SCALE_WS=EDEPS/(4*PI*LATT_CUR%OMEGA*REAL(WDES1%GRID%NPLWV,q))
++      DO NI=1,WDES1%NGVECTOR
++         QV=TPI*MATMUL(LATT_CUR%B,WDES1%VKPT+REAL([WDES1%IGX(NI),WDES1%IGY(NI),WDES1%IGZ(NI)],q))
++         CALL ws_get(QV,VALUE,IERR)
++         IF (IERR/=0) CALL vtutor%error('WS Fourier query is not commensurate with the supported Gamma mesh')
++         POTFAK(NI)=SCALE_WS*VALUE
++      ENDDO
++    END SUBROUTINE SET_GFAC_WAVEFUN_WS
++
+     SUBROUTINE SET_GFAC_WAVEFUN(WDES1, LATT_CUR, FSG, POTFAK, ENCUT, ENCUTSOFT)
+       USE constant
+       USE wave
+@@ -2453,6 +2570,7 @@ GPOMP !$OMP TARGET TEAMS DISTRIBUTE PARALLEL DO MAP(PRESENT,TO:GRID,POTFAK) IF(O
+       INTEGER NK
+ 
+       FSG_STORE=0
++      IF (WINT_CUTOFF_MODE==WINT_CUTOFF_WS) RETURN
+ 
+       ! uniform grid, and no use of HFKIDENT, then FSG is identical for all k-points
+       IF (KPOINTS_FULL%Mode>= MonkhorstPack .AND. KPOINTS_FULL%Mode <= GeneratingLattice .AND. &
+diff --git a/src/fock_glb.F b/src/fock_glb.F
+index 5e43952b48d1cb840a7ed57295c4e510b0e59582..8263f57f95b165f94ef9e52e0b7dada8383b7ef2 100644
+--- a/src/fock_glb.F
++++ b/src/fock_glb.F
+@@ -63,6 +63,12 @@ MODULE fock_glb
+   !> cutoff for HF kernel applicable to 0 and 3 dimensional systems (molecules)
+   REAL(q),SAVE :: HFRCUT=0
+ 
++  ! Private opt-in Wannier interaction mode. HFRCUT remains a radius internally.
++  INTEGER, PARAMETER :: WINT_CUTOFF_NATIVE=0, WINT_CUTOFF_WS=1
++  INTEGER, SAVE :: WINT_CUTOFF_MODE=WINT_CUTOFF_NATIVE
++  REAL(q), SAVE :: WS_TOL=1.0e-8_q
++  INTEGER, SAVE :: WS_NGRID(3)=0
++
+   !> smoothed cutoff function applied in correlated calculations
+   REAL(q),SAVE :: HFRCUT_SMOOTH=1._q/200._q
+ 
+diff --git a/src/mlwf.F b/src/mlwf.F
+index 57cf4bd9b2697cb946ae6aeae5e7f37f00de7391..3afd28d7c1e28667ce8fc80e863a1a7637e378d2 100644
+--- a/src/mlwf.F
++++ b/src/mlwf.F
+@@ -161,6 +161,10 @@ MODULE mlwf
+       REAL(q) :: MU(2)
+       !> Parameter for broadening of erfc or gaussian for each spin channel
+       REAL(q) :: SIGMA(2)
++      LOGICAL :: MU_EXPLICIT = .FALSE.
++      LOGICAL :: SIGMA_EXPLICIT = .FALSE.
++      LOGICAL :: TYPE_EXPLICIT = .FALSE.
++      LOGICAL :: TYPE_VALID = .TRUE.
+    END TYPE cutoff_type
+ 
+    TYPE(cutoff_type),SAVE :: CUTOFF_DES
+@@ -275,10 +279,11 @@ MODULE mlwf
+    ! local variables
+    REAL(q) :: MU(2), SIGMA(2)
+    INTEGER :: CUTOFF_TYPE
++   INTEGER :: CUTOFF_MU_COUNT, CUTOFF_SIGMA_COUNT, CUTOFF_TYPE_COUNT
+    INTEGER IPOS
+    INTEGER IDUM, N, IERR
+    REAL(q) RDUM
+-   LOGICAL LOPEN,LDUM
++   LOGICAL CUTOFF_TYPE_VALID,LOPEN,LDUM
+    CHARACTER (LEN=20) :: CUTOFF_TYPE_STR
+    CHARACTER (LEN=255) :: BUFLINE
+    LOGICAL  :: LWIN_FOUND
+@@ -393,22 +398,34 @@ MODULE mlwf
+    ! Location of the cut-off function
+    MU = HUGE(0._q)
+    CALL PROCESS_INCAR(LOPEN, IU0, IU5, 'CUTOFF_MU', MU, INFO%ISPIN, IERR, WRITEXMLINCAR, FOUNDNUMBER=IDUM)
++   CUTOFF_MU_COUNT = IDUM
+    IF (IDUM < INFO%ISPIN) MU(2) = MU(1)
+    ! Width of the cut-off function
+    SIGMA = HUGE(0._q)
+    CALL PROCESS_INCAR(LOPEN, IU0, IU5, 'CUTOFF_SIGMA', SIGMA, INFO%ISPIN, IERR, WRITEXMLINCAR, FOUNDNUMBER=IDUM)
++   CUTOFF_SIGMA_COUNT = IDUM
+    IF (IDUM < INFO%ISPIN) SIGMA(2) = SIGMA(1)
+    ! Type of the cut-off function
+    CUTOFF_TYPE_STR = '--'
+    CALL PROCESS_INCAR(LOPEN, IU0, IU5, 'CUTOFF_TYPE', CUTOFF_TYPE_STR, 20, IERR, WRITEXMLINCAR, FOUNDNUMBER=IDUM)
++   CUTOFF_TYPE_COUNT = IDUM
+    CUTOFF_TYPE = CUTOFF_NONE
++   CUTOFF_TYPE_VALID = .TRUE.
+    IF (CUTOFF_TYPE_STR /= '--') THEN
++      CUTOFF_TYPE_VALID = .FALSE.
++      IF (NOCCUR(LOWERCASE(CUTOFF_TYPE_STR),'none',-1))     CUTOFF_TYPE = CUTOFF_NONE
+       IF (NOCCUR(LOWERCASE(CUTOFF_TYPE_STR),'erfc',-1))     CUTOFF_TYPE = CUTOFF_ERFC
+       IF (NOCCUR(LOWERCASE(CUTOFF_TYPE_STR),'gaussian',-1)) CUTOFF_TYPE = CUTOFF_GAUSSIAN
+       IF (NOCCUR(LOWERCASE(CUTOFF_TYPE_STR),'fermi',-1))    CUTOFF_TYPE = CUTOFF_FERMI
+       IF (NOCCUR(LOWERCASE(CUTOFF_TYPE_STR),'num_wann',-1)) CUTOFF_TYPE = CUTOFF_NUM_WANN
++      CUTOFF_TYPE_VALID = NOCCUR(LOWERCASE(CUTOFF_TYPE_STR),'none',-1)     .OR. &
++                          NOCCUR(LOWERCASE(CUTOFF_TYPE_STR),'erfc',-1)     .OR. &
++                          NOCCUR(LOWERCASE(CUTOFF_TYPE_STR),'gaussian',-1) .OR. &
++                          NOCCUR(LOWERCASE(CUTOFF_TYPE_STR),'fermi',-1)    .OR. &
++                          NOCCUR(LOWERCASE(CUTOFF_TYPE_STR),'num_wann',-1)
+    ENDIF
+-   CALL CUTOFF_DES_INIT(CUTOFF_DES,CUTOFF_TYPE,INFO%ISPIN,MU,SIGMA,NUM_WANN)
++   CALL CUTOFF_DES_INIT(CUTOFF_DES,CUTOFF_TYPE,INFO%ISPIN,MU,SIGMA,NUM_WANN, &
++      CUTOFF_MU_COUNT>0,CUTOFF_SIGMA_COUNT>0,CUTOFF_TYPE_COUNT>0,CUTOFF_TYPE_VALID)
+ 
+    ! Switch on the PEAD routines
+    IF (MLWFRUN()) THEN
+@@ -484,9 +501,9 @@ MODULE mlwf
+    LOGICAL,PARAMETER :: WRITE_AMN = .TRUE.
+    LOGICAL,PARAMETER :: WRITE_EIG = .TRUE.
+    COMPLEX(q),ALLOCATABLE :: A_MATRIX_TMP(:,:,:,:)
+-   LOGICAL :: MY_LWANNIER90_RUN
++   LOGICAL :: ESTIMATE_CUTOFF, MY_LWANNIER90_RUN
+    INTEGER :: NUM_WANN_TMP
+-   INTEGER :: IB,IBP,IW,IK,IS
++   INTEGER :: IW,IK,IS
+    INTEGER :: NCDIJ, NKPTS, NB_TOT
+ 
+    PROFILING_START('mlwf_main')
+@@ -561,25 +578,24 @@ MODULE mlwf
+        P_MLWF%PROJ_MODE==PROJ_LOCPROJ.OR.&
+        P_MLWF%PROJ_MODE==PROJ_LOCPROJAUTO.OR.&
+        LWANNIER90_AUTO_WINDOW) THEN
+-      CALL CUTOFF_DES_ESTIMATE(CUTOFF_DES,WDES,W,P_MLWF%NUM_WANN,KPOINTS,INFO,IO)
++      ESTIMATE_CUTOFF = .TRUE.
++      IF (P_MLWF%PROJ_MODE==PROJ_SCDM) CALL CUTOFF_DES_PREPARE_SCDM( &
++         CUTOFF_DES,P_MLWF%EXCLUDE_BAND,P_MLWF%NUM_WANN,ESTIMATE_CUTOFF,IO)
++      IF (ESTIMATE_CUTOFF) CALL CUTOFF_DES_ESTIMATE(CUTOFF_DES,WDES,W,P_MLWF%NUM_WANN,KPOINTS,INFO,IO)
+       CALL CUTOFF_DES_PRINT(CUTOFF_DES,IO)
+    ENDIF
+    IF (LWANNIER90_AUTO_WINDOW) CALL ESTIMATE_AUTO_WINDOW(MLWF,W)
+    ! Compute AMN
+    IF (P_MLWF%PROJ_MODE==PROJ_SCDM) THEN
+-      CALL CALC_WANNIER_TRAFO_SCDM(W,P_MLWF%NUM_WANN,A_MATRIX_TMP,P,LATT_CUR,P_MLWF%NKPTS,P_MLWF%kpt_latt,IO)
+-      ALLOCATE(MLWF%A_matrix(MLWF%NB_TOT-MLWF%NEXCLB,MLWF%NUM_WANN,MLWF%NKPTS,MLWF%ISPIN))
+-      MLWF%A_matrix = (0.0_q,0.0_q)
+-      ! Need to transfer the data to what wannier90 expects
+-      DO IW = 1, MLWF%NUM_WANN
+-         IBP = 0
+-         DO IB = 1, MLWF%NB_TOT
+-            IF (MLWF%EXCLUDE_BAND(IB)) CYCLE
+-            IBP = IBP + 1
+-            MLWF%A_matrix(IBP,IW,:,:) = A_MATRIX_TMP(IB,IW,:,:)
+-         ENDDO
+-      ENDDO
+-      DEALLOCATE(A_MATRIX_TMP)
++      CALL CALC_WANNIER_TRAFO_SCDM(W,P_MLWF%NUM_WANN,A_MATRIX_TMP,P,LATT_CUR,P_MLWF%NKPTS, &
++         P_MLWF%kpt_latt,IO,EXCLUDE_BAND=P_MLWF%EXCLUDE_BAND)
++      IF (SIZE(A_MATRIX_TMP,1) /= P_MLWF%NB_TOT-P_MLWF%NEXCLB .OR. &
++          SIZE(A_MATRIX_TMP,2) /= P_MLWF%NUM_WANN .OR. &
++          SIZE(A_MATRIX_TMP,3) /= P_MLWF%NKPTS .OR. &
++          SIZE(A_MATRIX_TMP,4) /= P_MLWF%ISPIN) CALL vtutor%error( &
++         "MLWF_MAIN: inconsistent compact SCDM transformation shape")
++      IF (ALLOCATED(P_MLWF%A_matrix)) DEALLOCATE(P_MLWF%A_matrix)
++      CALL MOVE_ALLOC(A_MATRIX_TMP, P_MLWF%A_matrix)
+    ELSE IF (P_MLWF%PROJ_MODE/=PROJ_UNKNOWN) THEN
+       CALL LPRJ_WRITE_FUNCTIONS(P_MLWF%LPRJ_functions,MLWF%NRSPINORS==2,IO)
+       CALL MLWF_CALC_AMN(P_MLWF,WDES,W,P,CQIJ,T_INFO,LATT_CUR,INFO,IO)
+@@ -809,20 +825,95 @@ MODULE mlwf
+  END SUBROUTINE MLWF_WRITE_FINAL
+ 
+  !> Initialize the cutoff descriptor with all the necessary information
+- SUBROUTINE CUTOFF_DES_INIT(SELF,CUTOFF_ITYPE,ISPIN,MU,SIGMA,NUM_WANN)
++ SUBROUTINE CUTOFF_DES_INIT(SELF,CUTOFF_ITYPE,ISPIN,MU,SIGMA,NUM_WANN, &
++                            MU_EXPLICIT,SIGMA_EXPLICIT,TYPE_EXPLICIT,TYPE_VALID)
+    TYPE(cutoff_type) :: SELF
+    INTEGER,INTENT(IN) :: ISPIN
+    INTEGER,INTENT(IN) :: CUTOFF_ITYPE
+    REAL(q),INTENT(IN) :: MU(2)
+    REAL(q),INTENT(IN) :: SIGMA(2)
+    INTEGER,INTENT(IN) :: NUM_WANN
++   LOGICAL,INTENT(IN) :: MU_EXPLICIT,SIGMA_EXPLICIT,TYPE_EXPLICIT,TYPE_VALID
+    SELF%TYPE = CUTOFF_ITYPE
+    SELF%ISPIN = ISPIN
+    SELF%MU = MU
+    SELF%SIGMA = SIGMA
+    SELF%NUM_WANN = NUM_WANN
++   SELF%MU_EXPLICIT = MU_EXPLICIT
++   SELF%SIGMA_EXPLICIT = SIGMA_EXPLICIT
++   SELF%TYPE_EXPLICIT = TYPE_EXPLICIT
++   SELF%TYPE_VALID = TYPE_VALID
+  END SUBROUTINE CUTOFF_DES_INIT
+ 
++ !> Select safe SCDM cutoff semantics when Wannier90 excludes bands
++ SUBROUTINE CUTOFF_DES_PREPARE_SCDM(CUTOFF_DES,EXCLUDE_BAND,NUM_WANN,NEEDS_ESTIMATE,IO)
++   USE tutor, ONLY : vtutor
++   USE base,   ONLY : in_struct
++
++   TYPE(cutoff_type),INTENT(INOUT) :: CUTOFF_DES
++   LOGICAL,INTENT(IN) :: EXCLUDE_BAND(:)
++   INTEGER,INTENT(IN) :: NUM_WANN
++   LOGICAL,INTENT(OUT) :: NEEDS_ESTIMATE
++   TYPE(in_struct),INTENT(IN) :: IO
++
++   INTEGER :: NB_SCDM
++   LOGICAL :: COMPLETE,EXPLICIT_REQUEST
++
++   NEEDS_ESTIMATE = .TRUE.
++   IF (.NOT. ANY(EXCLUDE_BAND)) RETURN
++
++   NB_SCDM = COUNT(.NOT. EXCLUDE_BAND)
++   EXPLICIT_REQUEST = CUTOFF_DES%MU_EXPLICIT .OR. CUTOFF_DES%SIGMA_EXPLICIT .OR. &
++                      CUTOFF_DES%TYPE_EXPLICIT
++   NEEDS_ESTIMATE = .FALSE.
++
++   IF (.NOT. EXPLICIT_REQUEST) THEN
++      IF (NB_SCDM == NUM_WANN) THEN
++         CUTOFF_DES%TYPE = CUTOFF_NONE
++         IF (IO%IU6>=0) WRITE(IO%IU6,'(A)') &
++            ' SCDM: no energy cutoff is applied within the selected subspace (NB_SCDM == NUM_WANN)'
++         RETURN
++      ENDIF
++      CALL vtutor%error( &
++         "SCDM with exclude_bands: automatic cutoff estimation is not supported for an entangled compact subspace")
++   ENDIF
++
++   IF (.NOT. CUTOFF_DES%TYPE_VALID) CALL vtutor%error( &
++      "SCDM with exclude_bands: explicit cutoff parameters are incomplete or the cutoff type is unsupported")
++
++   ! Historically explicit MU and SIGMA without CUTOFF_TYPE select ERFC.
++   IF (.NOT. CUTOFF_DES%TYPE_EXPLICIT .AND. CUTOFF_DES%MU_EXPLICIT .AND. &
++       CUTOFF_DES%SIGMA_EXPLICIT) CUTOFF_DES%TYPE = CUTOFF_ERFC
++
++   SELECT CASE (CUTOFF_DES%TYPE)
++      CASE (CUTOFF_NONE)
++         COMPLETE = CUTOFF_DES%TYPE_EXPLICIT
++      CASE (CUTOFF_ERFC,CUTOFF_GAUSSIAN)
++         COMPLETE = CUTOFF_DES%MU_EXPLICIT .AND. CUTOFF_DES%SIGMA_EXPLICIT
++      CASE (CUTOFF_FERMI)
++         COMPLETE = CUTOFF_DES%MU_EXPLICIT
++      CASE (CUTOFF_NUM_WANN)
++         COMPLETE = CUTOFF_DES%SIGMA_EXPLICIT
++      CASE DEFAULT
++         COMPLETE = .FALSE.
++   END SELECT
++
++   IF (.NOT. COMPLETE) CALL vtutor%error( &
++      "SCDM with exclude_bands: explicit cutoff parameters are incomplete " // &
++      "(TYPE=erfc/gaussian require CUTOFF_MU and CUTOFF_SIGMA, TYPE=fermi requires CUTOFF_MU, " // &
++      "TYPE=num_wann requires CUTOFF_SIGMA); automatic estimation is disabled")
++
++   IF (IO%IU6>=0) THEN
++      IF (CUTOFF_DES%TYPE==CUTOFF_NONE) THEN
++         WRITE(IO%IU6,'(A)') &
++            ' SCDM: explicit CUTOFF_TYPE = none, unit weights are used for the selected bands'
++      ELSE
++         WRITE(IO%IU6,'(A)') &
++            ' SCDM: explicit cutoff parameters are used, evaluated on the selected bands'
++      ENDIF
++   ENDIF
++ END SUBROUTINE CUTOFF_DES_PREPARE_SCDM
++
+  !> @brief Estimate cutoff descriptor which contains the necessary information
+  !> to use the SCDM method or to obtain unitary transformations from LOCPROJ
+  SUBROUTINE CUTOFF_DES_ESTIMATE(CUTOFF_DES,WDES,W,NUM_WANN,KPOINTS,INFO,IO)
+@@ -1051,6 +1142,10 @@ MODULE mlwf
+    IF (MLWF%NUM_WANN == 0) THEN
+       CALL vtutor%error('NUM_WANN must be different from zero when using projections from Wannier90.')
+    ENDIF
++   ! MLWF%NUM_WANN is the effective number (INCAR value or LPRJ heuristic); the
++   ! INCAR NUM_WANN read by MLWF_READER may be zero. CUTOFF_NUM_WANN uses this
++   ! value as an eigenvalue index in the compact band list, so it must match.
++   CUTOFF_DES%NUM_WANN = MLWF%NUM_WANN
+ 
+    MLWF%mp_grid(1)=KPOINTS%NKPX
+    MLWF%mp_grid(2)=KPOINTS%NKPY
+@@ -3182,6 +3277,7 @@ DOESI MLWF%eigenvalues=0.0_q ! Breaks NiO_2E4W (gnu) sporadically, passed to wan
+     USE wave_high
+     USE full_kpoints
+     USE pead, ONLY : LUSEPEAD,WDES_FULL_PEAD,PEAD_WA_ROTATE
++    USE tutor, ONLY : vtutor
+     TYPE(wavespin),INTENT(IN) :: W
+     TYPE(potcar),INTENT(IN) :: P(:) !< Potcar datastructure
+     TYPE(latt),INTENT(IN) :: LATT_CUR !< Current lattice datastructure
+@@ -3189,7 +3285,7 @@ DOESI MLWF%eigenvalues=0.0_q ! Breaks NiO_2E4W (gnu) sporadically, passed to wan
+     !> Unit of the file to write the real-space WF. Negative number to skip writting
+     INTEGER,INTENT(IN) :: IU
+     REAL(q),INTENT(IN) :: K(3)  !< Coordinates of the k-point for which to write the real-space WF
+-    LOGICAL,OPTIONAL :: EXCLUDE_BAND(W%WDES%NB_TOT)
++    LOGICAL,OPTIONAL,INTENT(IN) :: EXCLUDE_BAND(:)
+     !> Optionally return the orbitals for this k-point in a single array
+     GDEF,OPTIONAL,INTENT(OUT) :: WVFN_BANDS(:,:)
+     !> Optionally return the eigenvalues of this array
+@@ -3203,7 +3299,7 @@ DOESI MLWF%eigenvalues=0.0_q ! Breaks NiO_2E4W (gnu) sporadically, passed to wan
+ 
+     TYPE(rotation_handle) :: ROT_HANDLE
+ 
+-    INTEGER NK,NB,ISTRIP,ISPINOR,NPW,NPWS
++    INTEGER NK,NB,NB_ORIG,NB_OUTPUT,ISTRIP,ISPINOR,NPW,NPWS
+     INTEGER NX,NY,NZ,NC,NGX,NGY,NGZ,IND,I,NWRITTEN
+     INTEGER, PARAMETER :: NSTRIP=1
+ 
+@@ -3235,7 +3331,6 @@ DOESI MLWF%eigenvalues=0.0_q ! Breaks NiO_2E4W (gnu) sporadically, passed to wan
+        CALL PEAD_WA_ROTATE(WP,P,LATT_CUR,ISP,WK)
+     ENDIF
+ 
+-    IF (PRESENT(CELEN)) CELEN = W%CELTOT(:,KPOINTS_FULL%NEQUIV(NK),ISP)
+     ALLOCATE(WSTRIP(NSTRIP))
+ 
+     ALLOCATE(WCOLLECT(NSTRIP*WP%WDES%NB_PAR))
+@@ -3244,6 +3339,30 @@ DOESI MLWF%eigenvalues=0.0_q ! Breaks NiO_2E4W (gnu) sporadically, passed to wan
+     ENDDO
+ 
+     NPW = NGX*NGY*NGZ
++    NB_OUTPUT = W%WDES%NB_TOT
++    IF (PRESENT(EXCLUDE_BAND)) THEN
++       IF (SIZE(EXCLUDE_BAND) /= W%WDES%NB_TOT) CALL vtutor%error( &
++          "GET_WAVE_FUNCTIONS: inconsistent EXCLUDE_BAND shape")
++       NB_OUTPUT = COUNT(.NOT. EXCLUDE_BAND)
++    ENDIF
++    IF (PRESENT(WVFN_BANDS)) THEN
++       IF (SIZE(WVFN_BANDS,1) /= NPW*W%WDES%NRSPINORS .OR. SIZE(WVFN_BANDS,2) /= NB_OUTPUT) &
++          CALL vtutor%error("GET_WAVE_FUNCTIONS: inconsistent WVFN_BANDS shape")
++    ENDIF
++    IF (PRESENT(CELEN)) THEN
++       IF (SIZE(CELEN) /= NB_OUTPUT) &
++          CALL vtutor%error("GET_WAVE_FUNCTIONS: inconsistent CELEN shape")
++       NWRITTEN = 0
++       DO NB_ORIG = 1, W%WDES%NB_TOT
++          IF (PRESENT(EXCLUDE_BAND)) THEN
++             IF (EXCLUDE_BAND(NB_ORIG)) CYCLE
++          ENDIF
++          NWRITTEN = NWRITTEN + 1
++          CELEN(NWRITTEN) = W%CELTOT(NB_ORIG,KPOINTS_FULL%NEQUIV(NK),ISP)
++       ENDDO
++       IF (NWRITTEN /= NB_OUTPUT) &
++          CALL vtutor%error("GET_WAVE_FUNCTIONS: inconsistent number of eigenvalues written")
++    ENDIF
+     ALLOCATE(WVFN(NPW*W%WDES%NRSPINORS))
+ 
+     NWRITTEN=0
+@@ -3254,9 +3373,11 @@ DOESI MLWF%eigenvalues=0.0_q ! Breaks NiO_2E4W (gnu) sporadically, passed to wan
+        ENDDO
+        CALL W1_GATHER_W1(WP,MIN(WDESK%NBANDS-NB+1,NSTRIP),WSTRIP,WCOLLECT)
+        DO ISTRIP=1,MIN(WDESK%NBANDS-NB+1,NSTRIP)*WP%WDES%NB_PAR
++          NB_ORIG = (NB-1)*WP%WDES%NB_PAR+ISTRIP
++          IF (NB_ORIG > W%WDES%NB_TOT) CYCLE
+           ! skip this band?
+           IF (PRESENT(EXCLUDE_BAND)) THEN
+-            IF (EXCLUDE_BAND((NB-1)*WP%WDES%NB_PAR+ISTRIP)) CYCLE
++            IF (EXCLUDE_BAND(NB_ORIG)) CYCLE
+           ENDIF
+           I=0; WVFN=0
+           ! might seem strange to duplicate these loops,
+@@ -3303,6 +3424,8 @@ DOESI MLWF%eigenvalues=0.0_q ! Breaks NiO_2E4W (gnu) sporadically, passed to wan
+           IF (PRESENT(WVFN_BANDS)) WVFN_BANDS(:,NWRITTEN) = WVFN
+        ENDDO
+     ENDDO
++    IF (NWRITTEN /= NB_OUTPUT) &
++       CALL vtutor%error("GET_WAVE_FUNCTIONS: inconsistent number of bands written")
+ 
+     ! some deallocation to be done
+     CALL DEALLOCATE_ROT_HANDLE(ROT_HANDLE)
+@@ -3903,7 +4026,7 @@ DOESI MLWF%eigenvalues=0.0_q ! Breaks NiO_2E4W (gnu) sporadically, passed to wan
+ !> @brief Calculates the Wannier transformation matrices according to the SCDM method.
+ !
+ !******************************************************************************
+- SUBROUTINE CALC_WANNIER_TRAFO_SCDM(W, NUM_WANN, T, P, LATT_CUR, NKPTS, VKPT, IO)
++ SUBROUTINE CALC_WANNIER_TRAFO_SCDM(W, NUM_WANN, T, P, LATT_CUR, NKPTS, VKPT, IO, EXCLUDE_BAND)
+     USE base,               ONLY  : in_struct
+     USE wave_struct_def,    ONLY  : wavespin
+     USE pseudo_struct_def,  ONLY  : potcar
+@@ -3920,28 +4043,82 @@ DOESI MLWF%eigenvalues=0.0_q ! Breaks NiO_2E4W (gnu) sporadically, passed to wan
+     INTEGER,                   INTENT(IN)  :: NKPTS
+     REAL(q),                   INTENT(IN)  :: VKPT(3, NKPTS)
+     TYPE(in_struct),           INTENT(IN)  :: IO
++    LOGICAL, OPTIONAL,         INTENT(IN)  :: EXCLUDE_BAND(:)
+ 
+     GDEF, ALLOCATABLE    :: PSI(:, :)
+     GDEF, ALLOCATABLE    :: PSI_D_SCDM(:, :)
+     GDEF, ALLOCATABLE    :: WVFN_PHASE(:)
++    GDEF                 :: GDEF_ELEMENT
+     INTEGER              :: ISP
+     INTEGER              :: K_IDX
+     INTEGER              :: IB, IW
+     INTEGER              :: ANCHOR_IDX, J
+-    INTEGER, ALLOCATABLE :: PIVOT_UP(:),PIVOT_DW(:)
++    INTEGER, ALLOCATABLE :: BAND_MAP(:),PIVOT_UP(:),PIVOT_DW(:)
++    LOGICAL, ALLOCATABLE :: ACTIVE_EXCLUDE_BAND(:)
+     REAL(q)              :: NORM
+     LOGICAL              :: DO_WORK
+ 
+     INTEGER              :: IDX_UP, IDX_DW, CURRENT_PIVOT, NP
++    INTEGER              :: NB_SCDM
++    INTEGER(qi8)         :: BYTES_PER_GDEF, PSI_BYTES, SCDM_BYTES
+     REAL(q), ALLOCATABLE :: CUTOFF_FACTOR(:)
+     COMPLEX(q),ALLOCATABLE :: CELEN(:)
+     TYPE(RRQR_DECOMPOSER)  :: RANK_REVEAL_QR
+     INTEGER                :: INFO
+ 
+-    IF (NUM_WANN > W%WDES%NB_TOT) CALL vtutor%error( &
+-       "CALC_WANNIER_TRAFO_SCDM: Number of Wannier functions must not be larger than number of bands.")
++    ALLOCATE(ACTIVE_EXCLUDE_BAND(W%WDES%NB_TOT))
++    ACTIVE_EXCLUDE_BAND = .FALSE.
++    IF (PRESENT(EXCLUDE_BAND)) THEN
++       IF (SIZE(EXCLUDE_BAND) /= W%WDES%NB_TOT) CALL vtutor%error( &
++          "CALC_WANNIER_TRAFO_SCDM: inconsistent EXCLUDE_BAND shape")
++       ACTIVE_EXCLUDE_BAND = EXCLUDE_BAND
++    ENDIF
++
++    NB_SCDM = COUNT(.NOT. ACTIVE_EXCLUDE_BAND)
++    IF (NB_SCDM <= 0) CALL vtutor%error( &
++       "CALC_WANNIER_TRAFO_SCDM: at least one active band is required")
++    IF (NUM_WANN > NB_SCDM) CALL vtutor%error( &
++       "CALC_WANNIER_TRAFO_SCDM: Number of Wannier functions must not be larger than number of active bands.")
++    ALLOCATE(BAND_MAP(NB_SCDM))
++    J = 0
++    DO IB = 1, W%WDES%NB_TOT
++       IF (ACTIVE_EXCLUDE_BAND(IB)) CYCLE
++       J = J + 1
++       BAND_MAP(J) = IB
++    ENDDO
++    IF (J /= NB_SCDM) CALL vtutor%error( &
++       "CALC_WANNIER_TRAFO_SCDM: inconsistent compact band map")
++    IF (NB_SCDM > 1) THEN
++       IF (ANY(BAND_MAP(2:) <= BAND_MAP(:NB_SCDM-1))) CALL vtutor%error( &
++          "CALC_WANNIER_TRAFO_SCDM: compact band map is not ascending")
++    ENDIF
++
++    NP = W%WDES%GRID%RL%NP
++    BYTES_PER_GDEF = STORAGE_SIZE(GDEF_ELEMENT, KIND=qi8) / 8_qi8
++    PSI_BYTES = BYTES_PER_GDEF * INT(NP, qi8) * INT(W%WDES%NRSPINORS, qi8) * INT(NB_SCDM, qi8)
++    SCDM_BYTES = PSI_BYTES
++    IF (IO%IU6>=0) THEN
++       WRITE(IO%IU6,'(A,I0)') ' SCDM total bands       = ', W%WDES%NB_TOT
++       WRITE(IO%IU6,'(A,I0)') ' SCDM excluded bands    = ', COUNT(ACTIVE_EXCLUDE_BAND)
++       WRITE(IO%IU6,'(A,I0)') ' SCDM active bands      = ', NB_SCDM
++       WRITE(IO%IU6,'(A,I0)') ' SCDM real-space points = ', NP
++       WRITE(IO%IU6,'(A,I0)') ' SCDM spinor components = ', W%WDES%NRSPINORS
++       WRITE(IO%IU6,'(A,I0)') ' Estimated PSI bytes    = ', PSI_BYTES
++       WRITE(IO%IU6,'(A,I0)') ' Estimated SCDM bytes   = ', SCDM_BYTES
++    ENDIF
++    IF (IO%IU0>=0) THEN
++       WRITE(IO%IU0,'(A,I0)') ' SCDM total bands       = ', W%WDES%NB_TOT
++       WRITE(IO%IU0,'(A,I0)') ' SCDM excluded bands    = ', COUNT(ACTIVE_EXCLUDE_BAND)
++       WRITE(IO%IU0,'(A,I0)') ' SCDM active bands      = ', NB_SCDM
++       WRITE(IO%IU0,'(A,I0)') ' SCDM real-space points = ', NP
++       WRITE(IO%IU0,'(A,I0)') ' SCDM spinor components = ', W%WDES%NRSPINORS
++       WRITE(IO%IU0,'(A,I0)') ' Estimated PSI bytes    = ', PSI_BYTES
++       WRITE(IO%IU0,'(A,I0)') ' Estimated SCDM bytes   = ', SCDM_BYTES
++    ENDIF
+ 
+-    ALLOCATE(T(W%WDES%NB_TOT, NUM_WANN, NKPTS, W%WDES%ISPIN))
++    ALLOCATE(T(NB_SCDM, NUM_WANN, NKPTS, W%WDES%ISPIN))
++    IF (SIZE(T,1) /= NB_SCDM) CALL vtutor%error( &
++       "CALC_WANNIER_TRAFO_SCDM: inconsistent compact transformation shape")
+     T = 0
+ 
+     ! Only node 1 should do the work, all the others just communicate
+@@ -3973,26 +4150,31 @@ DOESI MLWF%eigenvalues=0.0_q ! Breaks NiO_2E4W (gnu) sporadically, passed to wan
+       ! Only perform minimal amount of work on other nodes
+       DO ISP = 1, W%WDES%ISPIN
+          ! Calculate real-spave wave function (to communicate to node 1)
+-         CALL GET_WAVE_FUNCTIONS(W, VKPT(:, ANCHOR_IDX), ISP, P, LATT_CUR, -1)
++         PROFILING_START('scdm_wave_reconstruction')
++         CALL GET_WAVE_FUNCTIONS(W,VKPT(:,ANCHOR_IDX),ISP,P,LATT_CUR,-1, &
++            EXCLUDE_BAND=ACTIVE_EXCLUDE_BAND)
++         PROFILING_STOP('scdm_wave_reconstruction')
++         PROFILING_START('scdm_remaining_amn')
+          DO K_IDX = 1, NKPTS
+             ! Skip the anchor point as it was already computed
+             IF (ANCHOR_IDX==K_IDX) CYCLE
+             ! Calculate real-spave wave function (to communicate to node 1)
+-            CALL GET_WAVE_FUNCTIONS(W,VKPT(:,K_IDX),ISP,P,LATT_CUR,-1,PSI,CELEN)
++            CALL GET_WAVE_FUNCTIONS(W,VKPT(:,K_IDX),ISP,P,LATT_CUR,-1, &
++               EXCLUDE_BAND=ACTIVE_EXCLUDE_BAND)
+          ENDDO
++         PROFILING_STOP('scdm_remaining_amn')
+       ENDDO
+       ! Get the matrix from node 1
+       CALLMPI(M_bcast_z_from(W%WDES%COMM, T, SIZE(T), 1))
+       RETURN
+     ENDIF
+ 
+-    NP = W%WDES%GRID%RL%NP
+-    ALLOCATE(PSI(NP*W%WDES%NRSPINORS,W%WDES%NB_TOT))
+-    ALLOCATE(PSI_D_SCDM(W%WDES%NB_TOT,NP*W%WDES%NRSPINORS))
+-    ALLOCATE(CELEN(W%WDES%NB_TOT))
+-    ALLOCATE(WVFN_PHASE(NP*W%WDES%NRSPINORS))
++    ALLOCATE(PSI(NP*W%WDES%NRSPINORS,NB_SCDM))
++    ALLOCATE(PSI_D_SCDM(NB_SCDM,NP*W%WDES%NRSPINORS))
++    ALLOCATE(CELEN(NB_SCDM))
++    ALLOCATE(WVFN_PHASE(NP))
+ 
+-    CALL RANK_REVEAL_QR%INIT(W%WDES%NB_TOT, NP * W%WDES%NRSPINORS, INFO)
++    CALL RANK_REVEAL_QR%INIT(NB_SCDM, NP * W%WDES%NRSPINORS, INFO)
+     IF (INFO /= 0) CALL vtutor%error( &
+       "CALC_WANNIER_TRAFO_SCDM: xGEQP3 query returned with error code " // str(INFO))
+ 
+@@ -4003,17 +4185,20 @@ DOESI MLWF%eigenvalues=0.0_q ! Breaks NiO_2E4W (gnu) sporadically, passed to wan
+        ! |________________________________|
+ 
+       ! Calculate real-space wave function
+-      CALL GET_WAVE_FUNCTIONS(W,VKPT(:,ANCHOR_IDX),ISP,P,LATT_CUR,-1,PSI,CELEN)
+-      DO IB=1,W%WDES%NB_TOT
++      PROFILING_START('scdm_wave_reconstruction')
++      CALL GET_WAVE_FUNCTIONS(W,VKPT(:,ANCHOR_IDX),ISP,P,LATT_CUR,-1,PSI,CELEN, &
++         ACTIVE_EXCLUDE_BAND)
++      DO IB=1,NB_SCDM
+          NORM = REAL(DOT_PRODUCT(PSI(:,IB), PSI(:,IB)),KIND=q)
+          PSI(:,IB) = PSI(:,IB) / SQRT(NORM)
+       ENDDO
+ 
+       CALL GET_WAVE_FUNCTIONS_PHASE(W,VKPT(:,ANCHOR_IDX),WVFN_PHASE)
++      PROFILING_STOP('scdm_wave_reconstruction')
+ 
+       ! Calculate SCDM matrix
+       CUTOFF_FACTOR = CUTOFF_DES_GET_CUTOFF(CUTOFF_DES,ISP,CELEN)
+-      DO IB=1,W%WDES%NB_TOT
++      DO IB=1,NB_SCDM
+          PSI_D_SCDM(IB,:NP) = GCONJG(PSI(:NP,IB))*WVFN_PHASE(:)*CUTOFF_FACTOR(IB)
+          IF (W%WDES%NRSPINORS==2) &
+             PSI_D_SCDM(IB,NP+1:) = GCONJG(PSI(NP+1:,IB))*WVFN_PHASE(:)*CUTOFF_FACTOR(IB)
+@@ -4021,7 +4206,9 @@ DOESI MLWF%eigenvalues=0.0_q ! Breaks NiO_2E4W (gnu) sporadically, passed to wan
+ 
+        ! Use rank-revealing QR decomposition to find a localized representation
+        RANK_REVEAL_QR%PIVOT = 0
++       PROFILING_START('scdm_anchor_rrqr')
+        CALL RANK_REVEAL_QR%CALC(PSI_D_SCDM, INFO)
++       PROFILING_STOP('scdm_anchor_rrqr')
+        IF (INFO /= 0) CALL vtutor%error( &
+          "CALC_WANNIER_TRAFO_SCDM: xGEQP3 returned with error code " // str(INFO))
+ 
+@@ -4054,7 +4241,7 @@ DOESI MLWF%eigenvalues=0.0_q ! Breaks NiO_2E4W (gnu) sporadically, passed to wan
+ 
+        ! Extract SCDM matrix at anchor point
+        CUTOFF_FACTOR = CUTOFF_DES_GET_CUTOFF(CUTOFF_DES,ISP,CELEN)
+-       DO IB=1,W%WDES%NB_TOT
++       DO IB=1,NB_SCDM
+           DO IW=1,NUM_WANN
+              J=RANK_REVEAL_QR%PIVOT(IW); IF ( J > NP) J = J-NP
+              T(IB,IW,ANCHOR_IDX,ISP) = GCONJG(PSI(RANK_REVEAL_QR%PIVOT(IW),IB))*WVFN_PHASE(J)*CUTOFF_FACTOR(IB)
+@@ -4065,14 +4252,16 @@ DOESI MLWF%eigenvalues=0.0_q ! Breaks NiO_2E4W (gnu) sporadically, passed to wan
+        ! |                                  |
+        ! |   Loop over remaining k-points   |
+        ! |__________________________________|
++       PROFILING_START('scdm_remaining_amn')
+        DO K_IDX = 1, NKPTS
+ 
+           ! Skip the anchor point as it was already computed
+           IF (ANCHOR_IDX==K_IDX) CYCLE
+ 
+           ! Calculate real-space wave function
+-          CALL GET_WAVE_FUNCTIONS(W,VKPT(:,K_IDX),ISP,P,LATT_CUR,-1,PSI,CELEN)
+-          DO IB=1,W%WDES%NB_TOT
++          CALL GET_WAVE_FUNCTIONS(W,VKPT(:,K_IDX),ISP,P,LATT_CUR,-1,PSI,CELEN, &
++             ACTIVE_EXCLUDE_BAND)
++          DO IB=1,NB_SCDM
+              NORM = REAL(DOT_PRODUCT(PSI(:,IB), PSI(:,IB)),KIND=q)
+              PSI(:,IB) = PSI(:,IB) / SQRT(NORM)
+           ENDDO
+@@ -4081,13 +4270,14 @@ DOESI MLWF%eigenvalues=0.0_q ! Breaks NiO_2E4W (gnu) sporadically, passed to wan
+ 
+           ! Calculate SCDM matrix at current k-point
+           CUTOFF_FACTOR = CUTOFF_DES_GET_CUTOFF(CUTOFF_DES,ISP,CELEN)
+-          DO IB=1,W%WDES%NB_TOT
++          DO IB=1,NB_SCDM
+              DO IW=1,NUM_WANN
+                 J=RANK_REVEAL_QR%PIVOT(IW); IF ( J > NP) J = J-NP
+                 T(IB,IW,K_IDX,ISP) = GCONJG(PSI(RANK_REVEAL_QR%PIVOT(IW),IB))*WVFN_PHASE(J)*CUTOFF_FACTOR(IB)
+              ENDDO
+           ENDDO
+        ENDDO
++       PROFILING_STOP('scdm_remaining_amn')
+     ENDDO
+ 
+     ! Broadcast the matrix from node 1 to all others
+@@ -4096,6 +4286,7 @@ DOESI MLWF%eigenvalues=0.0_q ! Breaks NiO_2E4W (gnu) sporadically, passed to wan
+ 
+  !> @brief Get cutoff function for a set of energy states
+  FUNCTION CUTOFF_DES_GET_CUTOFF(CUTOFF_DES,ISP,CELEN) RESULT(CUTOFF_FACTOR)
++    USE tutor, ONLY : vtutor
+     TYPE(cutoff_type),INTENT(IN) :: CUTOFF_DES
+     INTEGER,INTENT(IN) :: ISP
+     COMPLEX(q),INTENT(IN) :: CELEN(:)
+@@ -4111,6 +4302,8 @@ DOESI MLWF%eigenvalues=0.0_q ! Breaks NiO_2E4W (gnu) sporadically, passed to wan
+         CASE(CUTOFF_FERMI)
+            CUTOFF_FACTOR = 1.0_q/(EXP((REAL(CELEN,q)-CUTOFF_DES%MU(ISP)))+1.0_q)
+         CASE(CUTOFF_NUM_WANN)
++           IF (CUTOFF_DES%NUM_WANN < 1 .OR. CUTOFF_DES%NUM_WANN > SIZE(CELEN)) CALL vtutor%error( &
++              "CUTOFF_DES_GET_CUTOFF: NUM_WANN is outside the provided band dimension")
+            MU = REAL(CELEN(CUTOFF_DES%NUM_WANN),q)
+            CUTOFF_FACTOR = .5_q * ERFC((REAL(CELEN,q) - MU) / CUTOFF_DES%SIGMA(ISP))
+         CASE DEFAULT
+diff --git a/src/ws_coulomb.F b/src/ws_coulomb.F
+new file mode 100644
+index 0000000000000000000000000000000000000000..b7bbf6af2c7bcd9319f9d1e7591a546d5c56c797
+--- /dev/null
++++ b/src/ws_coulomb.F
+@@ -0,0 +1,464 @@
++! Original standalone MIC construction following Sundararaman and Arias,
++! Phys. Rev. B 87, 165122 (2013), Appendix A.1. No VASP dependencies.
++!
++! A contains the BvK superlattice vectors as COLUMNS, in Angstrom.
++! q is Cartesian inverse Angstrom; ws_get returns integral_WS exp(-iq.r)/r
++! in Angstrom**2 (the physical Coulomb constant is applied by the caller).
++! Only reciprocal vectors of this superlattice are valid queries.
++!
++! tol controls the erfc range separation and smooth-part bandwidth. It is
++! NOT a uniform error bound on individual Fourier coefficients: periodic
++! WS-face derivative cusps produce quadrature errors. Converge head/edges
++! and density contractions independently with WS_NGRID. At and outside
++! the FFT Nyquist faces only the analytic short-range term is returned.
++!
++! The saved cache is process-local. Initialize/reset outside threaded query
++! regions; ws_get is read-only and safe for parallel queries after ws_init.
++module ws_coulomb
++  use iso_fortran_env, only: real64, int64
++  use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
++  implicit none
++  private
++  public :: ws_init, ws_get, ws_info, ws_reset
++  integer, parameter :: dp=real64
++  real(dp), parameter :: pi=acos(-1.0_dp)
++  integer(int64), parameter :: memory_limit=536870912_int64 ! 512 MiB per process
++  real(dp), save :: lattice(3,3)=0, saved_tol=0, alpha_saved=0, rin_saved=0, volume_saved=0
++  integer, save :: shape_saved(3)=0, requested_grid(3)=0
++  integer(int64), save :: bytes_saved=0
++  logical, save :: ready=.false.
++  complex(dp), allocatable, save :: coefficients(:,:,:)
++contains
++
++  subroutine ws_reset()
++    if (allocated(coefficients)) deallocate(coefficients)
++    ready=.false.
++    lattice=0; saved_tol=0; alpha_saved=0; rin_saved=0; volume_saved=0
++    shape_saved=0; requested_grid=0; bytes_saved=0
++  end subroutine
++
++  subroutine ws_info(ngrid,alpha,rin,volume,bytes)
++    integer, intent(out) :: ngrid(3)
++    real(dp), intent(out) :: alpha,rin,volume
++    integer(int64), intent(out) :: bytes
++    ngrid=shape_saved; alpha=alpha_saved; rin=rin_saved; volume=volume_saved; bytes=bytes_saved
++  end subroutine
++
++  subroutine ws_init(a_super,tol,grid_override,ierr,message)
++    real(dp), intent(in) :: a_super(3,3),tol
++    integer, intent(in) :: grid_override(3)
++    integer, intent(out) :: ierr
++    character(len=*), intent(out) :: message
++    real(dp) :: inv(3,3),recip(3,3),reduced(3,3),qr(3,3),rr(3,3),alias(3,3)
++    real(dp) :: shortest,alias_short,alpha,rin,volume,bandwidth,point(3),d2,sample,needed
++    integer :: ng(3),i,j,k,axis,iteration,stat
++    integer(int64) :: count,memory
++    logical :: ok
++    complex(dp), allocatable :: line(:)
++
++    ierr=0; message=''
++    if (ready) then
++      if (all(a_super==lattice).and.tol==saved_tol.and.all(grid_override==requested_grid)) then
++        message='WS MIC cache reused; Fourier face and finite-density convergence still required'
++        return
++      endif
++    endif
++    call ws_reset()
++    if (.not.all(ieee_is_finite(a_super)).or..not.ieee_is_finite(tol)) then
++      ierr=2; message='WS: nonfinite lattice or tolerance'; return
++    endif
++    if (tol<1.0e-14_dp.or.tol>=0.1_dp.or.any(grid_override<0)) then
++      ierr=2; message='WS: require 1e-14 <= tol < 0.1 and nonnegative grid dimensions'; return
++    endif
++    call inverse3(a_super,inv,volume,ok)
++    if (.not.ok) then
++      ierr=3; message='WS: singular, nonfinite or numerically ill-conditioned lattice'; return
++    endif
++    call reduce_qr(a_super,reduced,qr,rr,ok)
++    if (.not.ok) then
++      ierr=3; message='WS: lattice reduction failed; extreme conditioning or integer transform'; return
++    endif
++    call shortest_vector(reduced,qr,rr,shortest,ok)
++    if (.not.ok) then
++      ierr=3; message='WS: shortest-vector enumeration could not be certified'; return
++    endif
++    rin=0.5_dp*shortest
++    alpha=sqrt(-log(tol))/rin
++    bandwidth=-2*log(tol)/rin
++    recip=2*pi*transpose(inv)
++    do axis=1,3
++      ! The physical smooth bandwidth must also fit ws_get's rectangular
++      ! coefficient-index box, including explicitly supplied skew grids.
++      needed=bandwidth*sqrt(sum(a_super(:,axis)**2))/pi
++      if (grid_override(axis)>0) then
++        ng(axis)=grid_override(axis)
++        if (.not.power_two(ng(axis))) then
++          ierr=4; message='WS: explicit grid dimensions must be powers of two'; return
++        endif
++        if (real(ng(axis),dp)<=needed) then
++          ierr=4; message='WS: explicit grid cannot contain the physical MIC bandwidth in its index box'; return
++        endif
++      else
++        if (needed>real(memory_limit/16,dp)) then
++          ierr=4; message='WS: automatic grid exceeds the 512 MiB memory cap'; return
++        endif
++        ng(axis)=8
++        do while (real(ng(axis),dp)<=needed)
++          ng(axis)=2*ng(axis)
++        enddo
++      endif
++    enddo
++    ok=.false.
++    do iteration=1,30
++      call grid_memory(ng,count,memory,ok)
++      if (.not.ok) then
++        ierr=4; message='WS: grid exceeds the 512 MiB per-process memory cap'; return
++      endif
++      do axis=1,3
++        alias(:,axis)=real(ng(axis),dp)*recip(:,axis)
++      enddo
++      call lattice_shortest(alias,alias_short,ok)
++      if (.not.ok) then
++        ierr=3; message='WS: reciprocal alias-lattice certification failed'; return
++      endif
++      if (alias_short/2>bandwidth*(1+1.0e-12_dp)) exit
++      if (all(grid_override>0)) then
++        ierr=4; message='WS: explicit grid fails the MIC Nyquist bandwidth requirement'; return
++      endif
++      do axis=1,3
++        if (grid_override(axis)==0) ng(axis)=2*ng(axis)
++      enddo
++    enddo
++    if (iteration>30) then
++      ierr=4; message='WS: automatic grid did not reach the MIC bandwidth'; return
++    endif
++    allocate(coefficients(ng(1),ng(2),ng(3)),line(maxval(ng)),stat=stat)
++    if (stat/=0) then
++      call ws_reset()
++      ierr=4; message='WS: allocation failed within declared memory cap'; return
++    endif
++    do k=0,ng(3)-1
++      do j=0,ng(2)-1
++        do i=0,ng(1)-1
++          point=a_super(:,1)*(real(i,dp)/ng(1))+a_super(:,2)*(real(j,dp)/ng(2)) &
++                +a_super(:,3)*(real(k,dp)/ng(3))
++          call closest_squared(point,reduced,qr,rr,d2,ok)
++          if (.not.ok) then
++            deallocate(line)
++            call ws_reset()
++            ierr=3; message='WS: exact minimum-image enumeration failed'; return
++          endif
++          if (d2<=tiny(1.0_dp)) then
++            sample=2*alpha/sqrt(pi)
++          else
++            sample=erf(alpha*sqrt(d2))/sqrt(d2)
++          endif
++          coefficients(i+1,j+1,k+1)=cmplx(sample,0.0_dp,dp)
++        enddo
++      enddo
++    enddo
++    do k=1,ng(3)
++      do j=1,ng(2)
++        call fft_line(coefficients(:,j,k))
++      enddo
++    enddo
++    do k=1,ng(3)
++      do i=1,ng(1)
++        line(:ng(2))=coefficients(i,:,k)
++        call fft_line(line(:ng(2)))
++        coefficients(i,:,k)=line(:ng(2))
++      enddo
++    enddo
++    do j=1,ng(2)
++      do i=1,ng(1)
++        line(:ng(3))=coefficients(i,j,:)
++        call fft_line(line(:ng(3)))
++        coefficients(i,j,:)=line(:ng(3))
++      enddo
++    enddo
++    coefficients=coefficients*(volume/real(count,dp))
++    deallocate(line)
++    lattice=a_super; saved_tol=tol; requested_grid=grid_override
++    shape_saved=ng; alpha_saved=alpha; rin_saved=rin; volume_saved=volume
++    bytes_saved=16_int64*count ! retained cache; peak additionally has a max(ng) complex work line
++    ready=.true.
++    message='WS MIC ready; tol controls smooth bandwidth; refine FFT for WS-face/coefficient convergence'
++  end subroutine
++
++  subroutine ws_get(qcart,value,ierr)
++    real(dp), intent(in) :: qcart(3)
++    real(dp), intent(out) :: value
++    integer, intent(out) :: ierr
++    real(dp) :: phase(3),q2,x,comm_tolerance
++    integer(int64) :: modes(3)
++    integer :: idx(3)
++    value=0; ierr=0
++    if (.not.ready) then
++      ierr=1; return
++    endif
++    if (.not.all(ieee_is_finite(qcart))) then
++      ierr=2; return
++    endif
++    phase=matmul(transpose(lattice),qcart)/(2*pi)
++    if (maxval(abs(phase))>1.0e12_dp.or..not.all(ieee_is_finite(phase))) then
++      ierr=5; return
++    endif
++    modes=nint(phase,kind=int64)
++    comm_tolerance=1.0e-7_dp+64*epsilon(1.0_dp)*maxval(abs(phase))
++    if (maxval(abs(phase-real(modes,dp)))>comm_tolerance) then
++      ierr=5; return
++    endif
++    q2=sum(qcart**2)
++    if (all(modes==0)) then
++      value=pi/alpha_saved**2
++    else
++      x=q2/(4*alpha_saved**2)
++      if (x<1.0e-5_dp) then
++        value=pi/alpha_saved**2*(1-x/2+x*x/6-x*x*x/24)
++      else
++        value=4*pi*(1-exp(-x))/q2
++      endif
++    endif
++    if (any(abs(modes)>=int(shape_saved/2,int64))) return
++    idx=int(modulo(modes,int(shape_saved,int64)))+1
++    value=value+real(coefficients(idx(1),idx(2),idx(3)),dp)
++  end subroutine
++
++  logical function power_two(n)
++    integer, intent(in) :: n
++    power_two=.false.
++    if (n<2) return
++    power_two=iand(n,n-1)==0
++  end function
++
++  subroutine grid_memory(ng,count,bytes,ok)
++    integer, intent(in) :: ng(3)
++    integer(int64), intent(out) :: count,bytes
++    logical, intent(out) :: ok
++    integer :: i
++    count=1; bytes=0; ok=.false.
++    do i=1,3
++      if (ng(i)<2) return
++      if (count>memory_limit/(16_int64*int(ng(i),int64))) return
++      count=count*int(ng(i),int64)
++    enddo
++    bytes=16_int64*(count+int(maxval(ng),int64))
++    ok=bytes<=memory_limit
++  end subroutine
++
++  subroutine inverse3(a,inv,volume,ok)
++    real(dp), intent(in) :: a(3,3)
++    real(dp), intent(out) :: inv(3,3),volume
++    logical, intent(out) :: ok
++    real(dp) :: det,scale
++    inv(1,:)=cross(a(:,2),a(:,3))
++    inv(2,:)=cross(a(:,3),a(:,1))
++    inv(3,:)=cross(a(:,1),a(:,2))
++    det=dot_product(a(:,1),inv(1,:)); volume=abs(det)
++    scale=sqrt(sum(a(:,1)**2)*sum(a(:,2)**2)*sum(a(:,3)**2))
++    ok=ieee_is_finite(volume).and.ieee_is_finite(scale).and.scale>tiny(1.0_dp)
++    if (.not.ok) return
++    ok=volume>1.0e-14_dp*scale
++    if (.not.ok) return
++    inv=inv/det
++    ok=all(ieee_is_finite(inv)).and.sqrt(sum(a*a)*sum(inv*inv))<1.0e10_dp
++  end subroutine
++
++  function cross(a,b) result(c)
++    real(dp), intent(in) :: a(3),b(3)
++    real(dp) :: c(3)
++    c=[a(2)*b(3)-a(3)*b(2),a(3)*b(1)-a(1)*b(3),a(1)*b(2)-a(2)*b(1)]
++  end function
++
++  subroutine orthogonalize(b,star,mu,norm2,ok)
++    real(dp), intent(in) :: b(3,3)
++    real(dp), intent(out) :: star(3,3),mu(3,3),norm2(3)
++    logical, intent(out) :: ok
++    integer :: i,j
++    star=0; mu=0; norm2=0; ok=.false.
++    do i=1,3
++      star(:,i)=b(:,i)
++      do j=1,i-1
++        mu(i,j)=dot_product(b(:,i),star(:,j))/norm2(j)
++        star(:,i)=star(:,i)-mu(i,j)*star(:,j)
++      enddo
++      norm2(i)=sum(star(:,i)**2)
++      if (.not.ieee_is_finite(norm2(i)).or.norm2(i)<=tiny(1.0_dp)) return
++    enddo
++    ok=.true.
++  end subroutine
++
++  subroutine reduce_qr(a,b,q,r,ok)
++    ! LLL with explicit integral unimodular column operations, followed by QR.
++    real(dp), intent(in) :: a(3,3)
++    real(dp), intent(out) :: b(3,3),q(3,3),r(3,3)
++    logical, intent(out) :: ok
++    real(dp) :: star(3,3),mu(3,3),norm2(3)
++    integer(int64) :: transform(3,3),column(3),m
++    integer :: k,j,iteration
++    transform=0
++    do k=1,3
++      transform(k,k)=1
++    enddo
++    b=a; k=2; iteration=0
++    do while (k<=3)
++      iteration=iteration+1
++      if (iteration>1000) then
++        ok=.false.; return
++      endif
++      call orthogonalize(b,star,mu,norm2,ok)
++      if (.not.ok) return
++      do j=k-1,1,-1
++        if (abs(mu(k,j))>1.0e8_dp) then
++          ok=.false.; return
++        endif
++        m=nint(mu(k,j),kind=int64)
++        if (m==0) cycle
++        column=transform(:,k)-m*transform(:,j)
++        if (maxval(abs(column))>100000000_int64) then
++          ok=.false.; return
++        endif
++        transform(:,k)=column
++        b=matmul(a,real(transform,dp))
++        call orthogonalize(b,star,mu,norm2,ok)
++        if (.not.ok) return
++      enddo
++      if (norm2(k)>=(0.75_dp-mu(k,k-1)**2)*norm2(k-1)) then
++        k=k+1
++      else
++        column=transform(:,k); transform(:,k)=transform(:,k-1); transform(:,k-1)=column
++        b=matmul(a,real(transform,dp)); k=max(2,k-1)
++      endif
++    enddo
++    call orthogonalize(b,star,mu,norm2,ok)
++    if (.not.ok) return
++    do k=1,3
++      q(:,k)=star(:,k)/sqrt(norm2(k))
++    enddo
++    r=matmul(transpose(q),b)
++    r(2,1)=0; r(3,1)=0; r(3,2)=0
++    ok=all(ieee_is_finite(r)).and.maxval(abs(matmul(transpose(q),q)-identity3()))<1.0e-8_dp
++  end subroutine
++
++  function identity3() result(a)
++    real(dp) :: a(3,3)
++    integer :: i
++    a=0
++    do i=1,3
++      a(i,i)=1
++    enddo
++  end function
++
++  subroutine lattice_shortest(a,length,ok)
++    real(dp), intent(in) :: a(3,3)
++    real(dp), intent(out) :: length
++    logical, intent(out) :: ok
++    real(dp) :: b(3,3),q(3,3),r(3,3)
++    call reduce_qr(a,b,q,r,ok)
++    if (ok) call shortest_vector(b,q,r,length,ok)
++  end subroutine
++
++  subroutine shortest_vector(b,q,r,length,ok)
++    real(dp), intent(in) :: b(3,3),q(3,3),r(3,3)
++    real(dp), intent(out) :: length
++    logical, intent(out) :: ok
++    real(dp) :: best,zero(3)
++    integer(int64) :: n(3)
++    best=minval(sum(b*b,dim=1)); zero=0; n=0
++    call sphere_search(r,zero,best,n,.true.,ok)
++    length=sqrt(best)
++  end subroutine
++
++  subroutine closest_squared(point,b,q,r,d2,ok)
++    real(dp), intent(in) :: point(3),b(3,3),q(3,3),r(3,3)
++    real(dp), intent(out) :: d2
++    logical, intent(out) :: ok
++    real(dp) :: y(3),residual(3)
++    integer(int64) :: n(3)
++    integer :: k
++    y=matmul(transpose(q),point); n=0
++    do k=3,1,-1
++      n(k)=nint((y(k)-dot_product(r(k,:),real(n,dp)))/r(k,k),kind=int64)
++    enddo
++    residual=point-matmul(b,real(n,dp)); d2=sum(residual**2)
++    call sphere_search(r,y,d2,n,.false.,ok)
++  end subroutine
++
++  subroutine sphere_search(r,y,best,n,exclude_zero,ok)
++    ! Complete QR sphere enumeration. Bounds are padded for floating roundoff;
++    ! no predetermined neighbour shell or component-wise image wrapping.
++    real(dp), intent(in) :: r(3,3),y(3)
++    real(dp), intent(inout) :: best
++    integer(int64), intent(inout) :: n(3)
++    logical, intent(in) :: exclude_zero
++    logical, intent(out) :: ok
++    integer :: visited
++    visited=0; ok=.true.
++    call visit(3,0.0_dp)
++  contains
++    recursive subroutine visit(level,partial)
++      integer, intent(in) :: level
++      real(dp), intent(in) :: partial
++      real(dp) :: center,radius,remaining,term,padding,safety
++      integer(int64) :: lo,hi,j
++      if (.not.ok) return
++      visited=visited+1
++      if (visited>1000000) then
++        ok=.false.; return
++      endif
++      if (level==0) then
++        if (exclude_zero.and.all(n==0)) return
++        best=min(best,partial)
++        return
++      endif
++      safety=256*epsilon(1.0_dp)*max(best,sum(y*y),sum(r*r),tiny(1.0_dp))
++      remaining=best-partial+safety
++      if (remaining<0) return
++      center=(y(level)-dot_product(r(level,level+1:3),real(n(level+1:3),dp)))/r(level,level)
++      radius=sqrt(max(0.0_dp,remaining))/abs(r(level,level))
++      padding=128*epsilon(1.0_dp)*max(1.0_dp,abs(center),radius)
++      if (abs(center)+radius>1.0e12_dp) then
++        ok=.false.; return
++      endif
++      lo=ceiling(center-radius-padding,kind=int64)
++      hi=floor(center+radius+padding,kind=int64)
++      do j=lo,hi
++        n(level)=j
++        term=r(level,level)*(real(j,dp)-center)
++        call visit(level-1,partial+term*term)
++      enddo
++    end subroutine
++  end subroutine
++
++  subroutine fft_line(data)
++    complex(dp), intent(inout) :: data(:)
++    complex(dp) :: temp,w,step
++    integer :: n,i,j,bit,width,start,k
++    n=size(data); j=0
++    do i=0,n-1
++      if (i<j) then
++        temp=data(i+1); data(i+1)=data(j+1); data(j+1)=temp
++      endif
++      bit=n/2
++      do while (bit>0)
++        if (iand(j,bit)==0) exit
++        j=ieor(j,bit); bit=bit/2
++      enddo
++      j=ieor(j,bit)
++    enddo
++    width=2
++    do while (width<=n)
++      step=cmplx(cos(-2*pi/width),sin(-2*pi/width),dp)
++      do start=1,n,width
++        w=cmplx(1.0_dp,0.0_dp,dp)
++        do k=0,width/2-1
++          temp=w*data(start+k+width/2)
++          data(start+k+width/2)=data(start+k)-temp
++          data(start+k)=data(start+k)+temp
++          w=w*step
++        enddo
++      enddo
++      width=2*width
++    enddo
++  end subroutine
++end module

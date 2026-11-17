@@ -1,0 +1,8 @@
+# Keep patch payloads byte-exact; use LF for deployment metadata and scripts.
+*.patch -text -whitespace
+*.sh text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+manifest.sha256 text eol=lf
+.gitignore text eol=lf
+.gitattributes text eol=lf

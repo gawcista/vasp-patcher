@@ -1,0 +1,21 @@
+# Track only deployment artifacts and their documentation.
+*
+
+!rollback/
+!rollback/ws-original-20261110/
+!rollback/ws-stable-20261113/
+!rollback/yukawa-20261116/
+!.gitattributes
+!.gitignore
+!README.md
+!SOURCE_IDENTITIES.json
+!apply_patch.sh
+!manifest.sha256
+!rollback/README.md
+!rollback/ws-original-20261110/apply_patch.sh
+!rollback/ws-original-20261110/vasp-6.6.1-scdm-compact-bands.patch
+!rollback/ws-stable-20261113/apply_patch.sh
+!rollback/ws-stable-20261113/vasp-6.6.1-scdm-compact-bands.patch
+!rollback/yukawa-20261116/apply_patch.sh
+!rollback/yukawa-20261116/vasp-6.6.1-scdm-compact-bands.patch
+!vasp-6.6.1-scdm-compact-bands.patch

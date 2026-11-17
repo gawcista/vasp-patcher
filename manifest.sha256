@@ -1,0 +1,13 @@
+8f46ca8f2c4cd3a734b507c5ff6e1863512ee4c2155088f549b7cd1b51c9a792  ./.gitattributes
+9a0437c9e24684d7d05278205788e2368e6564198605501b66ede044a86d575d  ./.gitignore
+e11ffed94f02589cd35af6f4b601196a382d2cccf697c7fa020eddba63fbd1db  ./README.md
+e96b5403efe3c73b173ce8ad85b45985bfb910d3bfc2972468c5242245488480  ./SOURCE_IDENTITIES.json
+276a49818ad008a9c03f690afb165b9159db4b1b79e443cc1b5cbbf171fce51c  ./apply_patch.sh
+0b2b38a512a406150fb52cc647f3c664df84d0a3bb356f410a8e547c6e553179  ./rollback/README.md
+7f574eff9d065f9944b6d2ebea2613d728d30feec092b54c735c156307de404d  ./rollback/ws-original-20261110/apply_patch.sh
+387d745897017f022665459dd47c6d061aed4eae7aa55edcad35f711572e2803  ./rollback/ws-original-20261110/vasp-6.6.1-scdm-compact-bands.patch
+e5949b9443ef3cf4aac34a7ffd7ad3ce6c6b5f59c82e16e02af47d8cd86594db  ./rollback/ws-stable-20261113/apply_patch.sh
+2b56ce840f85439196c3670cf4abeac14efb706a6410cf893e6f50d384cc467e  ./rollback/ws-stable-20261113/vasp-6.6.1-scdm-compact-bands.patch
+b166d5bc09a9da21f131a0fa4d14849aa4ab1440d85d67d69994d313a5ccc890  ./rollback/yukawa-20261116/apply_patch.sh
+b163061ecffcc1095a8a61a5d63b9d1f57ece2efa4805caf82f6438c3dc623b5  ./rollback/yukawa-20261116/vasp-6.6.1-scdm-compact-bands.patch
+24a9e73e5a6b686453532f4ac9faa3bf7531cfbfc6e484a6d1e9ebf908d4fb4d  ./vasp-6.6.1-scdm-compact-bands.patch
