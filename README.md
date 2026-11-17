@@ -96,7 +96,7 @@ eigenvalue, filter and transformation arrays. Retained states remain ordered
 by their original band indices, preserving the correspondence between AMN
 rows and VASP bands.
 
-The dominant SCDM buffers then scale with `N_active` in place of `NBANDS`.
+The dominant SCDM buffers then scale with $`N_{\mathrm{active}}`$ in place of `NBANDS`.
 The global wavefunction/WAVECAR arrays and the native MMN temporary array keep
 their original dimensions. The memory saving therefore comes from the SCDM
 working space within the larger VASP calculation.
@@ -148,10 +148,10 @@ represented by the mesh.
 #### 3.1 Why a finite k mesh needs Coulomb regularization
 
 In a plane-wave calculation, interaction matrix elements involve the Coulomb
-factor `4πC/Q²`, where `Q=k′−k+G` is the momentum transferred between Bloch
-states and `C=e²/(4πepsilon_0)` is the vacuum Coulomb prefactor. At `Q=0` this
+factor $`4\pi C/Q^2`$, where $`\mathbf Q=\mathbf k'-\mathbf k+\mathbf G`$ is the momentum transferred between Bloch
+states and $`C=e^2/(4\pi\epsilon_0)`$ is the vacuum Coulomb prefactor. At $`Q=0`$ this
 factor diverges. Its continuum integral is finite: the three-dimensional
-volume element contributes a factor proportional to Q², which cancels the
+volume element contributes a factor proportional to $`Q^2`$, which cancels the
 inverse square near the origin. A discrete k-point sum instead assigns a
 finite weight to the singular point. It therefore needs a prescription for
 the finite contribution of the surrounding reciprocal-space region.
@@ -165,8 +165,8 @@ Born–von Karman (BvK) superlattice. For a full mesh without further reductions
 N_k=N_1N_2N_3,\qquad V_B=N_k\Omega.
 ```
 
-Here `a_i` are the simulation-cell vectors, `N_i` are the mesh dimensions and
-Omega is the simulation-cell volume. The relevant electrostatic length scales
+Here $`\mathbf a_i`$ are the simulation-cell vectors, $`N_i`$ are the mesh dimensions and
+$`\Omega`$ is the simulation-cell volume. The relevant electrostatic length scales
 are consequently those of this k-mesh supercell. Choosing the finite-mesh
 Coulomb operator determines how the projected charges interact with their
 artificial supercell copies.
@@ -223,8 +223,8 @@ while Coulomb image interactions remain appreciable, because the electric
 field decays much more slowly than the orbital density. Moiré cells add long
 in-plane lattice scales and extended Wannier charge clouds to this problem.
 
-With one normal k point, the normal BvK period remains `Lz`, while the in-plane
-periods grow as **`N_i a_i`**. The resulting supercell can be much wider than
+With one normal k point, the normal BvK period remains $`L_z`$, while the in-plane
+periods grow as $`N_i\mathbf a_i`$. The resulting supercell can be much wider than
 it is tall. The origin correction in Section 3.2 fixes the short-distance
 reference; the periodic images and the uniform background still produce a
 potential that varies across this supercell.
@@ -262,18 +262,18 @@ n_{n\mathbf R}(\mathbf r').
 ```
 
 For well-separated localized orbitals, the isolated contribution is positive
-and decreases approximately as C/R. The residual image and background
+and decreases approximately as $`C/R`$. The residual image and background
 potential can outweigh this decreasing repulsion, so direct terms at large
 separations can become negative instead of following the isolated decay
 toward zero. The source of this behavior is the spatial field of the repeated
 charges and neutralizing background after the origin correction.
 
 Spherical truncation introduces a further geometric limitation. Consider an
-approximately orthogonal cell of `41 × 39 × 29 Å`, containing a layer with a
-vacuum gap greater than 15 Å along z. A `6 × 6 × 1` reciprocal-space mesh
-gives BvK lengths of about `246 × 234 × 29 Å`. The equal-volume sphere has
-radius about `73.6 Å`, while the normal WS half-width is `14.5 Å` and the
-in-plane half-widths are `117–123 Å`. The sphere spans repeated normal cells
+approximately orthogonal cell of 41 × 39 × 29 Å, containing a layer with a
+vacuum gap greater than 15 Å along z. A 6 × 6 × 1 reciprocal-space mesh
+gives BvK lengths of about 246 × 234 × 29 Å. The equal-volume sphere has
+radius about 73.6 Å, while the normal WS half-width is 14.5 Å and the
+in-plane half-widths are 117–123 Å. The sphere spans repeated normal cells
 while cutting off part of the useful in-plane range. Sampling its Fourier
 transform periodizes that sphere, retaining contributions where the copies
 overlap. Increasing the in-plane mesh at fixed vacuum makes this mismatch
@@ -303,9 +303,9 @@ K_{\mathrm{WS}}(\mathbf s)=\frac{C}{|\mathbf s|}\chi_{W_B}(\mathbf s).
 
 Inside this domain, the interaction is the vacuum Coulomb law. Its Fourier
 transform supplies the entire finite-mesh operator, including a finite head.
-For orthogonal vectors the domain is a box with half-widths `|A_i|/2`;
+For orthogonal vectors the domain is a box with half-widths $`|\mathbf A_i|/2`$;
 oblique cells use the actual lattice metric. The WS cells tile space, so the
-periodized truncated interaction follows `C/r` throughout the interior of
+periodized truncated interaction follows $`C/r`$ throughout the interior of
 the central cell.
 
 The paper's construction covers bulk and partially periodic systems; for a
@@ -317,7 +317,7 @@ behavior. In the present application, individual Wannier matrix elements are
 converged through their density tails, available interaction range and
 numerical resolution.
 
-#### 3.5 Full-cell representation: BVK_WS
+#### 3.5 Full-cell representation: `BVK_WS`
 
 The full-cell representation applies this construction to the complete BvK
 WS domain. A translation-invariant interaction is a function of the
@@ -326,22 +326,22 @@ is a scalar multiplier at each reciprocal momentum. The current `BVK_WS`
 path evaluates bare Coulomb and Yukawa interactions in this form.
 
 The bare numerical kernel follows the range-separated construction in
-Appendix A.1 of Sundararaman and Arias. The short-range erfc part is integrated
-analytically; the smooth erf/r part is sampled using nearest-image distances
+Appendix A.1 of Sundararaman and Arias. The short-range $`\mathrm{erfc}`$ part is integrated
+analytically; the smooth $`\mathrm{erf}(\alpha r)/r`$ part is sampled using nearest-image distances
 and transformed on the WS Fourier grid. The numerical separation and grid
 are controlled by `WS_TOL` and `WS_NGRID`. The physical prefactor and the
 native density-contraction normalization are applied by the VASP interface.
 
 For a layer with a perpendicular third vector and one normal k point, the
 full WS domain is an in-plane WS cell times a normal interval of half-width
-`Lz/2` in the relative displacement. This is a useful bare-interaction
+$`L_z/2`$ in the relative displacement. This is a useful bare-interaction
 representation when the important normal charge separations lie within that
 range. It also supports general three-dimensional lattice metrics. Its use
 for layered materials follows directly from the published WS construction.
 
 <a id="en-slab"></a>
 
-#### 3.6 Layer-resolved representation: SLAB_WS
+#### 3.6 Layer-resolved representation: `SLAB_WS`
 
 ##### Purpose: retain the charge heights and the surrounding environment
 
@@ -349,7 +349,7 @@ A polarizable sheet or a metal plate singles out a height in the device.
 Moving two charges together toward a plate changes the induced surface
 charge and their interaction, even though their mutual displacement stays
 fixed. The Green function must therefore retain the source and observation
-heights separately, in the form `V(rho−rho'; z,z')`.
+heights separately, in the form $`V(\boldsymbol\rho-\boldsymbol\rho';z,z')`$.
 
 The scalar full-cell path represents an operator depending on a relative
 three-dimensional coordinate. To handle the height-dependent environment,
@@ -360,14 +360,14 @@ as the sheet and gate calculations. The resulting operator, defined below,
 combines planar WS truncation with a height-resolved Green function.
 
 The finite-height sheet and gate models use this matrix representation.
-The strict RK2D approximation shares its planar WS integration, after first
+The strict `RK2D` approximation shares its planar WS integration, after first
 integrating out the orbital height. Section 4 gives the physical Green
 function for each environment.
 
 ##### Definition: a planar WS window and a normal density interval
 
-Choose the infinite-plane interaction `V_infinity(s;z,z')` appropriate to free
-space, a polarizable sheet or grounded plates. Let `W_parallel` be the WS cell
+Choose the infinite-plane interaction $`V_\infty(\mathbf s;z,z')`$ appropriate to free
+space, a polarizable sheet or grounded plates. Let $`W_\parallel`$ be the WS cell
 of the two in-plane BvK vectors. The finite-domain operator used here is
 
 ```math
@@ -379,22 +379,22 @@ V_\infty(\boldsymbol\rho-\boldsymbol\rho';z,z'),
 ```
 
 The window limits the relative in-plane displacement. Each charge retains
-its own height within `I`, an interval containing a single continuous layer
+its own height within $`I`$, an interval containing a single continuous layer
 and its density tails. The free and sheet Green functions extend to infinity
-along the normal; the gate Green function is grounded at `z0±d`. Those Green
-functions provide the electrostatic boundaries, while the endpoints of `I`
+along the normal; the gate Green function is grounded at $`z_0\pm d`$. Those Green
+functions provide the electrostatic boundaries, while the endpoints of $`I`$
 specify where the saved orbital densities are integrated.
 
 This layered operator is the extension implemented in this patch. Its
 ingredients are WS windowing and layered electrostatic Green functions.
 For comparison, the slab cutoff
-`Theta(zc−|z−z'|)/|r−r'|` of
+$`\Theta(z_c-|z-z'|)/|\mathbf r-\mathbf r'|`$ of
 [Ismail-Beigi (2006)](https://doi.org/10.1103/PhysRevB.73.233103) limits the
 relative normal displacement. The present construction integrates the two
 heights independently, allowing the potential to respond to their positions
 relative to a sheet or gate.
 
-Writing the infinite-plane Green function as `G_infinity(p;z,z')`, the planar
+Writing the infinite-plane Green function as $`G_\infty(\mathbf p;z,z')`$, the planar
 Fourier transform is
 
 ```math
@@ -412,7 +412,7 @@ head and the nonzero planar components.
 ##### Projection onto the normal Fourier basis
 
 The WAVECAR pair densities are available as Fourier coefficients. Their
-height dependence is expanded on `I` and contracted with the open-normal
+height dependence is expanded on $`I`$ and contracted with the open-normal
 Green function. In centered coordinates,
 
 ```math
@@ -436,13 +436,13 @@ The final phase converts the centered matrix into the global Fourier
 convention of the supplied density. It makes `WINT_Z0` part of the finite
 interval projection even for bare Coulomb. Integration over two independently
 bounded heights generally gives a dense matrix in the normal indices,
-including for the free kernel that depends only on `z−z'`. The planar momentum
+including for the free kernel that depends only on $`z-z'`$. The planar momentum
 remains diagonal because translation symmetry is preserved in the plane.
 
-Including `C`, the planar Green function has units `eV Å²` and the normal
-matrix has units `eV Å³`. VASP's Fourier and volume normalization converts
-the density contraction into an energy. Factoring out `C` leaves a geometric
-matrix with units `Å²`.
+Including $`C`$, the planar Green function has units eV Å² and the normal
+matrix has units eV Å³. VASP's Fourier and volume normalization converts
+the density contraction into an energy. Factoring out $`C`$ leaves a geometric
+matrix with units Å².
 
 The implementation separates the spatial integrations through
 
@@ -461,12 +461,12 @@ the normal integration.
 ##### Positioning the layer, sheet and gates
 
 `WINT_Z0` is an absolute Cartesian coordinate along the declared normal, in Å.
-For bare and Yukawa it centers the numerical density interval. For RK_SHEET
-it also places the polarizable sheet, and for DUAL_GATE it places the midpoint
+For bare and Yukawa it centers the numerical density interval. For `RK_SHEET`
+it also places the polarizable sheet, and for `DUAL_GATE` it places the midpoint
 between the plates. The layer's geometric center gives an initial estimate;
 the effective sheet and gate positions are physical model choices.
 
-Choose `I` with both endpoints in vacuum and the significant charge tails
+Choose $`I`$ with both endpoints in vacuum and the significant charge tails
 inside it. A layer crossing the periodic coordinate origin should first be
 unwrapped into one continuous copy. For bare interactions, shifting the
 interval boundaries within sufficient vacuum checks tail and numerical
@@ -474,7 +474,7 @@ errors. Moving a physical sheet or gate relative to the fixed layer changes
 the electrostatic environment.
 
 For thin, localized layer densities whose significant relative heights are
-less than `Lz/2`, the full-cell normal cutoff leaves those charge pairs
+less than $`L_z/2`$, the full-cell normal cutoff leaves those charge pairs
 unchanged. Bare integrals in the interior can then agree with the layered
 evaluation. Finite tails, normal resolution and domain boundaries determine
 the residual difference. The layered representation is chosen for its
@@ -487,33 +487,33 @@ remains an appropriate reference for translation-invariant interactions.
 
 Choose the representation from the physical operator and charge geometry:
 
-| Property | Full-cell representation: BVK_WS | Layer-resolved representation: SLAB_WS |
+| Property | Full-cell representation: `BVK_WS` | Layer-resolved representation: `SLAB_WS` |
 |---|---|---|
-| Finite domain | Full three-dimensional BvK WS cell in the relative coordinate | In-plane BvK WS window; each density occupies the normal interval I |
+| Finite domain | Full three-dimensional BvK WS cell in the relative coordinate | In-plane BvK WS window; each density occupies the normal interval $`I`$ |
 | Normal electrostatics | Translation-invariant relative-coordinate kernel | Open or gate-bounded Green function retaining both heights |
 | Fourier operator | Scalar at each three-dimensional momentum | Matrix in normal Fourier indices at each planar momentum |
-| Implemented models | Bare Coulomb, Yukawa | Bare Coulomb, Yukawa, finite-height RK, RK2D, dual gate |
+| Implemented models | Bare Coulomb, Yukawa | Bare Coulomb, Yukawa, finite-height RK, `RK2D`, dual gate |
 | Lattice geometry | General three-dimensional metric | Perpendicular third vector and one normal k point; oblique in-plane cells supported |
 | Reference plane | No independent height reference | Density-interval center; also the sheet position or gate midpoint when applicable |
 | Typical use | Bulk interactions or a localized layer with a suitable normal cutoff | Layer-resolved environmental screening and a matching finite-height reference |
 
-For the present implementation, the sheet, RK2D and gate selectors use
-`SLAB_WS`; BARE and YUKAWA support either representation. RK2D integrates
-out height and consequently has no Z0 dependence. Converge the planar range,
+For the present implementation, the sheet, `RK2D` and gate selectors use
+`SLAB_WS`; `BARE` and `YUKAWA` support either representation. `RK2D` integrates
+out height and consequently has no $`z_0`$ dependence. Converge the planar range,
 normal density containment and Fourier resolution for the chosen model.
 
 The shared VASP entry is `HFRCUT=-2`, used with `ALGO=2E4WA`. An explicit
 `WINT_KERNEL` selects the physical interaction and `WINT_BOUNDARY` selects
 its representation. Both full-cell and layered calculations use this entry.
 With all `WINT_*` tags omitted, it retains the original bare full-cell
-evaluation; explicitly selecting BARE uses the reconstructed-PAW density
+evaluation; explicitly selecting `BARE` uses the reconstructed-PAW density
 route explained in Section 5. Native VASP interprets an unpatched `-2` through
 its automatic-sphere branch.
 
 | Input | Definition |
 |---|---|
 | `HFRCUT=-2` | Enable this patch's WS representation for the Wannier-integral workflow |
-| `WINT_BOUNDARY=BVK_WS` | Full BvK WS domain; default boundary for explicit BARE/YUKAWA |
+| `WINT_BOUNDARY=BVK_WS` | Full BvK WS domain; default boundary for explicit `BARE`/`YUKAWA` |
 | `WS_NGRID` | Three-component kernel FFT grid; automatic by default |
 | `WS_TOL` | Internal kernel construction/quadrature control; default `1e-8` |
 
@@ -540,7 +540,7 @@ WINT_KERNEL = BARE
 WINT_BOUNDARY = BVK_WS
 ```
 
-For a layer centered at Cartesian z=0 with the default normal, the matching
+For a layer centered at Cartesian $`z=0`$ with the default normal, the matching
 layer-resolved bare reference uses
 
 ```text
@@ -553,20 +553,49 @@ WINT_Z0 = 0.0
 Set the reference coordinate from the actual structure. Screened calculations
 then select the desired kernel and its parameters from Section 4 while
 keeping the finalized Wannier basis fixed. The current dual-gate integration
-requires both plates to enclose the complete interval, giving `d>Lz/2`.
+requires both plates to enclose the complete interval, giving $`d>L_z/2`$.
 
 
 <a id="en-kernels"></a>
 
 ### 4. Physical interaction models
 
-Projecting the vacuum Coulomb law onto a DFT-derived Wannier basis gives
-bare interaction matrix elements. A low-energy model retains only selected
-electronic degrees of freedom. The surrounding dielectric, polarization of
-the material outside that target space and induced charges on nearby metal
-gates modify the interaction between the retained electrons. Incorporating
-those responses produces an effective interaction, generally dependent on
-frequency; the kernels below describe chosen static screening models.
+For very large cells, a microscopic screening calculation can be much more
+expensive than constructing the few Wannier orbitals retained in a low-energy
+model. cRPA evaluates electronic transitions involving many occupied and
+unoccupied states and constructs the dielectric response. This cost motivates
+the use of a static model for the screening kernel, followed by projection
+onto the existing Wannier basis.
+
+In cRPA, the polarization is separated into transitions within the target
+space and the remaining channels, including those involving remote bands:
+
+```math
+P=P_{\mathrm{target}}+P_r,
+\qquad
+W_r(\omega)=[1-vP_r(\omega)]^{-1}v.
+```
+
+Here $`v`$ is the bare Coulomb operator, and $`W_r`$ is the partially screened
+interaction before the target-space polarization is included. Its Wannier
+matrix elements define the low-energy interaction [14](#references--参考文献).
+The microscopic cRPA route and the model-kernel route thus share the same
+projection step. In the latter, a chosen static kernel approximates the
+relevant matrix elements of the partially screened interaction:
+
+```math
+\mathcal B_{W_r(0)}[\rho,\sigma]
+\simeq
+\mathcal B_{K_{\mathrm{model}}}[\rho,\sigma].
+```
+
+The bilinear form $`\mathcal B`$ is defined in Section 1. The model parameters
+can be constrained by material polarizabilities, smaller reference
+calculations and device geometry. Each selected kernel is projected using
+the saved Wannier orbitals. Projecting $`v`$ gives the bare reference;
+projecting a screened model incorporates the response represented by its
+parameters and electrostatic boundaries. A gate enters through the Green
+function of the specified device environment.
 
 This distinction is particularly consequential in two-dimensional materials,
 where electric fields extend beyond the layer into the substrate and the
@@ -586,8 +615,8 @@ For a subsequent fRG calculation, the screening parameters should represent
 the environment and electronic processes eliminated from the target model.
 The retained low-energy processes are then treated by the fRG flow. This
 separation is the partial-screening principle of low-energy model
-construction [14](#references--参考文献). The dielectric parameter `epsilon`
-is the relative permittivity, while `epsilon_0` is the vacuum permittivity.
+construction [14](#references--参考文献). The dielectric parameter $`\epsilon`$
+is the relative permittivity, while $`\epsilon_0`$ is the vacuum permittivity.
 Screening lengths set physical scales in the model; FFT parameters control
 numerical resolution.
 
@@ -601,18 +630,18 @@ K_0(\mathbf r,\mathbf r')=\frac{C}{|\mathbf r-\mathbf r'|},
 The bare kernel provides the vacuum reference. A more concentrated
 normalized orbital generally has a larger electrostatic self-interaction,
 which sets the onsite scale. Well-separated localized densities approach
-the point-charge `C/distance` law away from finite-domain boundaries. The
-electronic-structure calculation determines the Wannier charge clouds;
+the point-charge $`C/R`$ law away from finite-domain boundaries, with $`R`$
+denoting their center separation. The electronic-structure calculation determines the Wannier charge clouds;
 dielectric screening enters through the choice of interaction kernel.
 
 | Keyword | Meaning |
 |---|---|
 | `WINT_KERNEL=BARE` | Explicit full-PAW bare projection |
-| `WINT_BOUNDARY` | BVK_WS by default, or SLAB_WS |
-| `WINT_Z0` | Required only with SLAB_WS; sets its numerical interval |
+| `WINT_BOUNDARY` | `BVK_WS` by default, or `SLAB_WS` |
+| `WINT_Z0` | Required only with `SLAB_WS`; sets its numerical interval |
 
-For explicit BARE, omit `WINT_EPS` and the screening lengths. Use the same
-SLAB_WS domain and Z0 when it serves as the finite-height reference for the
+For explicit `BARE`, omit `WINT_EPS` and the screening lengths. Use the same
+`SLAB_WS` domain and $`z_0`$ when it serves as the finite-height reference for the
 layered screened models.
 
 #### 4.2 Homogeneous screening: the Yukawa interaction
@@ -629,8 +658,8 @@ K_Y(r)=\frac{C}{\epsilon}\frac{e^{-\kappa r}}r,
 \widetilde K_Y(\mathbf Q)=\frac{4\pi C}{\epsilon(Q^2+\kappa^2)}.
 ```
 
-The inverse length `kappa` sets the exponential decay length
-`lambda=1/kappa`. The functional form originates with
+The inverse length $`\kappa`$ sets the exponential decay length
+$`\lambda=1/\kappa`$. The functional form originates with
 [Yukawa (1935)](https://doi.org/10.11429/ppmsj1919.17.0_48); here it describes
 the static electronic-screening model specified by the displayed equation.
 Varying this length provides a simple way to study the effect of interaction
@@ -642,10 +671,10 @@ boundary conditions, as described below.
 | `WINT_KERNEL=YUKAWA` | Exponentially screened radial interaction |
 | `WINT_KAPPA` | Required inverse screening length, Å⁻¹; finite and nonnegative |
 | `WINT_EPS` | Homogeneous relative permittivity, default 1; finite and positive |
-| `WINT_BOUNDARY` | BVK_WS or SLAB_WS; the latter also requires Z0 |
+| `WINT_BOUNDARY` | `BVK_WS` or `SLAB_WS`; the latter also requires `WINT_Z0` |
 
-At `kappa=0` the kernel becomes bare/epsilon on the same domain, recovering
-explicit BARE when `epsilon=1`. As kappa increases, shorter length scales
+At $`\kappa=0`$ the kernel becomes $`K_0/\epsilon`$ on the same domain, recovering
+explicit `BARE` when $`\epsilon=1`$. As $`\kappa`$ increases, shorter length scales
 contribute more strongly relative to the distant interaction and require
 adequate density resolution.
 
@@ -657,7 +686,7 @@ three-dimensional dielectric. Screening therefore depends on the in-plane
 wavelength. An ideal polarizable sheet describes this response while the
 Wannier charge clouds retain their finite height distributions.
 
-Place the sheet at `z0` and define `r0` through the following Poisson problem:
+Place the sheet at $`z_0`$ and define $`r_0`$ through the following Poisson problem:
 
 ```math
 \left[-\partial_z^2+q^2+2r_0q^2\delta(z-z_0)\right]
@@ -687,12 +716,12 @@ reduces to the Rytova–Keldysh interaction derived by
 [Cudazzo, Tokatly and Rubio (2011)](https://doi.org/10.1103/PhysRevB.84.085406)
 and based on the earlier work of Rytova and Keldysh [7–9](#references--参考文献).
 
-On the sheet, the factor `r0 q/(1+r0 q)` increasingly suppresses
+On the sheet, the factor $`r_0q/(1+r_0q)`$ increasingly suppresses
 short-wavelength fields. At finite height, the exponential weights the
 induced response by each charge's distance from the sheet. For two charges
 on the same side and away from the sheet, the relative correction vanishes
-at sufficiently large q; the distant in-plane interaction retains its
-`C/(epsilon rho)` tail. Coincident charges away from the sheet retain the
+at sufficiently large $`q`$; the distant in-plane interaction retains its
+$`C/(\epsilon\rho)`$ tail. Coincident charges away from the sheet retain the
 local three-dimensional Coulomb singularity, while charges on the sheet have
 the logarithmic RK singularity. The approximation treats the polarizable
 material as one ideal plane within a uniform background dielectric.
@@ -705,10 +734,10 @@ material as one ideal plane within a uniform background dielectric.
 | `WINT_Z0` | Required sheet position and integration-interval center, Å |
 | `WINT_EPS` | Uniform background relative permittivity, default 1; finite and positive |
 
-The displayed equation defines `r0`, including its background-dielectric
+The displayed equation defines $`r_0`$, including its background-dielectric
 convention. Use that convention and consistent units when converting a
-two-dimensional polarizability into r0. At `r0=0` the sheet response vanishes,
-leaving the finite-height bare/epsilon interaction.
+two-dimensional polarizability into $`r_0`$. At $`r_0=0`$ the sheet response vanishes,
+leaving the finite-height $`K_0/\epsilon`$ interaction.
 
 #### 4.4 The strict two-dimensional Rytova–Keldysh interaction
 
@@ -726,8 +755,8 @@ K_{2D}(\rho)=\frac{\pi C}{2\epsilon r_0}
 \rho_{2D}(\boldsymbol\rho)=\int_I dz\,\rho_{3D}(\boldsymbol\rho,z).
 ```
 
-For r0>0, the real-space expression uses the Struve function `H0` and the
-Bessel function of the second kind `Y0`, with the asymptotic behavior
+For $`r_0>0`$, the real-space expression uses the Struve function $`H_0`$ and the
+Bessel function of the second kind $`Y_0`$, with the asymptotic behavior
 
 ```math
 K_{2D}(\rho)\simeq
@@ -750,19 +779,19 @@ scale of the chosen orbitals.
 |---|---|
 | `WINT_KERNEL=RK2D` | RK operator acting on height-integrated pair densities |
 | `WINT_BOUNDARY=SLAB_WS` | Required in-plane finite-domain representation |
-| `WINT_R0` | Required screening length, Å; finite and nonnegative; same convention as RK_SHEET |
+| `WINT_R0` | Required screening length, Å; finite and nonnegative; same convention as `RK_SHEET` |
 | `WINT_EPS` | Background relative permittivity, default 1; finite and positive |
 | `WINT_Z0` | Omit: the normal coordinate has been integrated out |
 
-At `r0=0`, the limiting kernel is the planar `C/(epsilon rho)` interaction.
-Recovering finite-height BARE additionally requires retaining the normal
+At $`r_0=0`$, the limiting kernel is the planar $`C/(\epsilon\rho)`$ interaction.
+Recovering finite-height `BARE` additionally requires retaining the normal
 density coordinates. The two-dimensional label refers to the charges and
 polarization; their electric field propagates in three dimensions.
 
 #### 4.5 Screening by two grounded metal plates
 
 Gates screen through induced surface charge. With two perfect plates at
-`z=z0−d` and `z=z0+d`, define `x=z−z0`. The appropriate electrostatic problem is
+$`z=z_0-d`$ and $`z=z_0+d`$, define $`x=z-z_0`$. The appropriate electrostatic problem is
 
 ```math
 (-\partial_x^2+q^2)G_g(q;x,x')
@@ -787,7 +816,7 @@ The plate Green function and its image construction are given by
 [Takae and Onuki (2013)](https://doi.org/10.1063/1.4821085). A parallel-plate
 interaction also enters the electronic model of
 [Throckmorton and Vafek (2012)](https://doi.org/10.1103/PhysRevB.86.115447).
-Here `d` is the distance from the midpoint to each plate, so their separation
+Here $`d`$ is the distance from the midpoint to each plate, so their separation
 is twice that distance.
 
 For point charges in the midplane, the image series can also be expanded
@@ -802,7 +831,7 @@ K_0\left(\frac{(2j+1)\pi\rho}{2d}\right).
 ```
 
 The lowest transverse mode controls the distant tail,
-`exp[−pi rho/(2d)]/sqrt(rho)`, with decay scale `2d/pi`. The full gate kernel
+$`\exp[-\pi\rho/(2d)]/\sqrt{\rho}`$, with decay scale $`2d/\pi`$. The full gate kernel
 contains all transverse modes and the two charge heights. It therefore
 captures both the spatial decay and the changing response as charges
 approach either plate.
@@ -811,14 +840,14 @@ approach either plate.
 |---|---|
 | `WINT_KERNEL=DUAL_GATE` | Two grounded plates, retaining both charge heights |
 | `WINT_BOUNDARY=SLAB_WS` | Required boundary representation |
-| `WINT_GATE_D` | Required midpoint-to-each-plate distance d in Å; plate spacing is 2d |
+| `WINT_GATE_D` | Required midpoint-to-each-plate distance $`d`$ in Å; plate spacing is $`2d`$ |
 | `WINT_Z0` | Required plate midpoint and integration-interval center, Å |
 | `WINT_EPS` | Homogeneous spacer relative permittivity, default 1; finite and positive |
 
 The current implementation places the entire density interval between the
-plates, requiring `d>Lz/2`. This condition follows from the integration
-domain used here. At large d, the operator approaches finite-height
-bare/epsilon. The Green function enters each two-electron integral with the
+plates, requiring $`d>L_z/2`$. This condition follows from the integration
+domain used here. At large $`d`$, the operator approaches finite-height
+$`K_0/\epsilon`$. The Green function enters each two-electron integral with the
 normalization shown above; the many-body Hamiltonian supplies the factor
 1/2 for pair counting. The one-electron image potential contributes separately
 to the hopping and onsite Hamiltonian.
@@ -863,7 +892,7 @@ screened models.
 
 The supported interaction path uses CPU NCL, `ISPIN=1` and `NCORE=1`, including
 noncollinear SOC spinors. A typical finite-height gate example, for a material
-reference plane at Cartesian z=0, adds:
+reference plane at Cartesian $`z=0`$, adds:
 
 ```text
 ALGO = 2E4WA
@@ -882,7 +911,7 @@ its native index conventions and records model parameters in the file
 headers and OUTCAR. Use these interactions with the one-electron SAWF
 Hamiltonian of the same Wannier basis.
 
-The scalar epsilon assumes a homogeneous isotropic medium; an anisotropic
+The scalar $`\epsilon`$ assumes a homogeneous isotropic medium; an anisotropic
 substrate or multilayer device calls for a suitable effective model or a
 more general Poisson Green function. The current sheet and gate selectors
 solve their respective electrostatic problems separately. A device containing
@@ -894,17 +923,17 @@ both requires the corresponding combined Green function.
 
 - **Orbital model:** band selection, Wannier gauge and the one-electron band
   representation determine which charge clouds interact.
-- **Normal vacuum and placement:** contain the significant density tails in I.
+- **Normal vacuum and placement:** contain the significant density tails in $`I`$.
   For bare, moving the boundaries within vacuum checks the finite-domain
   representation; moving a sheet or gate relative to a fixed layer changes
   the physical environment.
 - **Spatial range:** enlarge the BvK k mesh to increase the WS interaction range.
-- **Kernel resolution:** refine WS_NGRID at fixed range. WS_TOL sets the internal
+- **Kernel resolution:** refine `WS_NGRID` at fixed range. `WS_TOL` sets the internal
   construction and quadrature tolerance; convergence of the resulting matrix
   elements determines their numerical accuracy.
-- **Density resolution:** converge VCUTOFF together with NGX/NGY/NGZ. Short-range
+- **Density resolution:** converge `VCUTOFF` together with `NGX`/`NGY`/`NGZ`. Short-range
   and onsite interactions probe high-momentum density components. Raising
-  VCUTOFF alone can encounter a density-grid ceiling.
+  `VCUTOFF` alone can encounter a density-grid ceiling.
 
 When a larger density grid is incompatible with the existing CHGCAR,
 `ICHARG=12` can be used for the fixed-WAVECAR interaction projection.
@@ -1008,7 +1037,7 @@ f(E)=\frac12\mathrm{erfc}\left(\frac{E-\mu}{\sigma}\right).
 
 原生 VASP 的 SCDM 工作矩阵可能仍按完整能带数分配，即使 Wannier90 已排除其中大部分能带。moiré 晶胞同时增大实空间网格和能带数，使这部分内存开销尤为突出。本补丁将已有的 `exclude_bands` 选带结果用于 SCDM 的波函数、能量、过滤权重及变换矩阵。保留态按原始能带编号升序排列，从而保持 AMN 行与 VASP 能带之间的对应关系。
 
-主要 SCDM 工作矩阵的能带维度由 `NBANDS` 缩小为 `N_active`。全局波函数、 WAVECAR 和原有 MMN 临时矩阵保持原来的维度，因此内存节省来自 VASP 整体计算中的 SCDM 工作空间。
+主要 SCDM 工作矩阵的能带维度由 `NBANDS` 缩小为 $`N_{\mathrm{active}}`$。全局波函数、 WAVECAR 和原有 MMN 临时矩阵保持原来的维度，因此内存节省来自 VASP 整体计算中的 SCDM 工作空间。
 
 #### 怎样使用
 
@@ -1042,7 +1071,7 @@ SCDM 投影为后续 Wannier 局域化提供初始基底。外部工具可通过
 
 #### 3.1 有限 k 网格为何需要处理库仑奇点
 
-裸库仑核的倒空间形式为 `4πC/Q²`，其中 `C=e²/(4πepsilon_0)`。动量转移包含两个 Bloch 波矢之差及一个倒格矢。在 `Q=0` 处，核逐点发散，但三维体积元含有平方动量因子，因此零点附近的积分有限。连续积分包含这一小体积的贡献；离散求和则需要用有限数值表示它。直接删去零模会遗漏这部分贡献，使长程库仑积分对 k 网格收敛缓慢。
+裸库仑核的倒空间形式为 $`4\pi C/Q^2`$，其中 $`C=e^2/(4\pi\epsilon_0)`$。动量转移包含两个 Bloch 波矢之差及一个倒格矢。在 $`Q=0`$ 处，核逐点发散，但三维体积元含有平方动量因子，因此零点附近的积分有限。连续积分包含这一小体积的贡献；离散求和则需要用有限数值表示它。直接删去零模会遗漏这部分贡献，使长程库仑积分对 k 网格收敛缓慢。
 
 这一问题也有实空间解释。对于无额外约化的完整 Γ 中心均匀网格，Bloch 态的离散 Fourier 变换给出在 Born–von Karman（BvK）超晶格上重复的 Wannier 轨道及跃迁密度。原晶格矢量、采样点数与该超晶格的关系为
 
@@ -1051,7 +1080,7 @@ SCDM 投影为后续 Wannier 局域化提供初始基底。外部工具可通过
 N_k=N_1N_2N_3,\qquad V_B=N_k\Omega.
 ```
 
-因此，k 网格同时决定实空间的重复周期和可分辨的相互作用范围。原胞体积为 Ω，BvK 体积为原胞的 N_k 倍。处理库仑奇点时，对有限动量求和所作的选择也会反映在这些重复电荷分布之间的相互作用中。
+因此，k 网格同时决定实空间的重复周期和可分辨的相互作用范围。原胞体积为 $`\Omega`$，BvK 体积为原胞的 $`N_k`$ 倍。处理库仑奇点时，对有限动量求和所作的选择也会反映在这些重复电荷分布之间的相互作用中。
 
 #### 3.2 VASP 中的原生处理
 
@@ -1089,7 +1118,7 @@ R_c=\left(\frac{3N_k\Omega}{4\pi}\right)^{1/3}.
 
 为孤立二维材料构造扩展 Hubbard 模型，需要同一材料层内 Wannier 电荷云之间的相互作用。平面波计算沿法向加入真空，真空厚度通常按抑制层间轨道重叠来选择。库仑场的作用距离远长于轨道重叠范围，因此周期重复层仍会影响长距离矩阵元。moiré 体系具有较大的面内晶格尺度和较为扩展的 Wannier 轨道，使这一问题更加明显。
 
-法向只有一个 k 点时，BvK 法向周期保持为 `Lz`，面内周期则按 **`N_i a_i`** 增长，采样超胞因而可能远宽于其法向高度。第 3.2 节的原点修正确定了短距离库仑势的参考，周期镜像和均匀补偿背景仍会在超胞内产生随位置变化的电势。
+法向只有一个 k 点时，BvK 法向周期保持为 $`L_z`$，面内周期则按 $`N_i\mathbf a_i`$ 增长，采样超胞因而可能远宽于其法向高度。第 3.2 节的原点修正确定了短距离库仑势的参考，周期镜像和均匀补偿背景仍会在超胞内产生随位置变化的电势。
 
 将两个归一化的 Wannier 电荷密度记为 $`n_{m0}`$ 和 $`n_{n\mathbf R}`$，两者的空间积分均为一。在修正后的周期核下，密度直接项为
 
@@ -1117,9 +1146,9 @@ n_{n\mathbf R}(\mathbf r').
 \end{aligned}
 ```
 
-相隔足够远的局域轨道，其孤立库仑直接项为正，并近似按 C/R 减小。残余的镜像与背景电势可能超过这一逐渐减小的排斥作用，使计算得到的密度直接项没有随距离增大而趋近于零，而是在远距离出现负值。其来源是周期重复电荷和补偿背景在原点修正后仍保留的空间电势。
+相隔足够远的局域轨道，其孤立库仑直接项为正，并近似按 $`C/R`$ 减小。残余的镜像与背景电势可能超过这一逐渐减小的排斥作用，使计算得到的密度直接项没有随距离增大而趋近于零，而是在远距离出现负值。其来源是周期重复电荷和补偿背景在原点修正后仍保留的空间电势。
 
-球形截断还存在几何上的限制。例如，考虑一个 `41 × 39 × 29 Å` 的近似正交晶胞，其中材料层在 z 方向的真空间隔大于 15 Å。对于 `6 × 6 × 1` 的倒空间网格（k mesh），BvK 超胞尺寸约为 `246 × 234 × 29 Å`。等体积球的半径约为 `73.6 Å`，而法向 WS 半宽为 `14.5 Å`，面内半宽为 `117–123 Å`。这个球在法向跨越重复晶胞，同时截掉了一部分面内长距离。离散 Fourier 采样使球形核周期重复，重叠部分因而保留了重复层的贡献。在固定真空厚度下增加面内 k 网格，会进一步放大这一形状差异。随重复晶格变化的截断区域，能够同时匹配短的法向尺度和长的面内尺度。
+球形截断还存在几何上的限制。例如，考虑一个 41 × 39 × 29 Å 的近似正交晶胞，其中材料层在 z 方向的真空间隔大于 15 Å。对于 6 × 6 × 1 的倒空间网格（k mesh），BvK 超胞尺寸约为 246 × 234 × 29 Å。等体积球的半径约为 73.6 Å，而法向 WS 半宽为 14.5 Å，面内半宽为 117–123 Å。这个球在法向跨越重复晶胞，同时截掉了一部分面内长距离。离散 Fourier 采样使球形核周期重复，重叠部分因而保留了重复层的贡献。在固定真空厚度下增加面内 k 网格，会进一步放大这一形状差异。随重复晶格变化的截断区域，能够同时匹配短的法向尺度和长的面内尺度。
 
 #### 3.4 Wigner–Seitz 截断的原理
 
@@ -1141,31 +1170,31 @@ K_{\mathrm{WS}}(\mathbf s)=\frac{C}{|\mathbf s|}\chi_{W_B}(\mathbf s).
 =\int_{W_B}d^3s\,\frac{C\,e^{-i\mathbf Q\cdot\mathbf s}}{|\mathbf s|}.
 ```
 
-积分区域有限，零模也随之有限。截断改变所有动量分量，并以这一统一构造替代原生周期核及其零模修正。区域内的物理定律仍是 `C/r`，有限范围由晶格和 k 网格决定；环境屏蔽则通过后文的物理核定义。
+积分区域有限，零模也随之有限。截断改变所有动量分量，并以这一统一构造替代原生周期核及其零模修正。区域内的物理定律仍是 $`C/r`$，有限范围由晶格和 k 网格决定；环境屏蔽则通过后文的物理核定义。
 
 文中的 WS 超胞方法涵盖体材料及部分周期体系。占据数加权的 Wannier 型函数具有指数局域性时，交换能误差随采样超胞的线性尺寸指数衰减；零温金属则保持代数收敛。用于 Wannier 相互作用时，单个矩阵元的精度取决于参与积分的密度尾部、可用空间范围和数值分辨率。
 
-#### 3.5 完整 BvK 单元中的表示（BVK_WS）
+#### 3.5 完整 BvK 单元中的表示（`BVK_WS`）
 
-`BVK_WS` 在完整三维 BvK WS 单元上表示相互作用。正交晶格对应各方向半宽为 `|A_i|/2` 的长方体；斜晶格按实际晶格度量确定最近镜像。裸库仑和 Yukawa 核均只依赖相对位移，截断后的周期表示因此可在完整倒空间中用标量 Fourier 乘子作用于密度。
+`BVK_WS` 在完整三维 BvK WS 单元上表示相互作用。正交晶格对应各方向半宽为 $`|\mathbf A_i|/2`$ 的长方体；斜晶格按实际晶格度量确定最近镜像。裸库仑和 Yukawa 核均只依赖相对位移，截断后的周期表示因此可在完整倒空间中用标量 Fourier 乘子作用于密度。
 
-这一表示也适用于层状材料。第三晶格矢量垂直面内，且法向只有一个 k 点时，法向 WS 边界位于原胞的半宽处，面内范围则随 k 网格扩大。若材料电荷集中在一层中，参与所关注积分的主要法向相对距离小于 `Lz/2`，且密度尾部足够小，完整 BvK 构造可以保留这些电荷之间的裸相互作用。接近 WS 面的长距离项则需要更充分的范围与尾部收敛检查。
+这一表示也适用于层状材料。第三晶格矢量垂直面内，且法向只有一个 k 点时，法向 WS 边界位于原胞的半宽处，面内范围则随 k 网格扩大。若材料电荷集中在一层中，参与所关注积分的主要法向相对距离小于 $`L_z/2`$，且密度尾部足够小，完整 BvK 构造可以保留这些电荷之间的裸相互作用。接近 WS 面的长距离项则需要更充分的范围与尾部收敛检查。
 
-对裸库仑核，数值上采用短程与平滑部分的分离：用 erfc(alpha r)/r 的解析 Fourier 项处理原点附近的短程贡献，在 WS 网格上对平滑的 erf(alpha r)/r 部分作 FFT。分离参数 alpha 由 WS 内切半径和 `WS_TOL` 确定；两部分相加恢复所需的截断核。`WS_NGRID` 控制平滑部分的 Fourier 采样及 WS 面附近的积分误差。这一分离参数用于数值构造，物理屏蔽长度由所选模型另行给出。
+对裸库仑核，数值上采用短程与平滑部分的分离：用 $`\mathrm{erfc}(\alpha r)/r`$ 的解析 Fourier 项处理原点附近的短程贡献，在 WS 网格上对平滑的 $`\mathrm{erf}(\alpha r)/r`$ 部分作 FFT。分离参数 $`\alpha`$ 由 WS 内切半径和 `WS_TOL` 确定；两部分相加恢复所需的截断核。`WS_NGRID` 控制平滑部分的 Fourier 采样及 WS 面附近的积分误差。这一分离参数用于数值构造，物理屏蔽长度由所选模型另行给出。
 
 <a id="zh-slab"></a>
 
-#### 3.6 保留轨道厚度的层状表示（SLAB_WS）
+#### 3.6 保留轨道厚度的层状表示（`SLAB_WS`）
 
 ##### 层状环境为何需要两个高度坐标
 
-极化片和金属板在器件中选定了一个高度。将两团电荷一起向某块金属板移动，即使保持它们的相对位移不变，诱导表面电荷产生的屏蔽也会改变。因此，这类相互作用具有 `V(rho−rho'; z,z')` 的形式，需要分别保留源和观察点的高度。 Wannier 电荷分布本身也有有限厚度，这些高度应参与积分。
+极化片和金属板在器件中选定了一个高度。将两团电荷一起向某块金属板移动，即使保持它们的相对位移不变，诱导表面电荷产生的屏蔽也会改变。因此，这类相互作用具有 $`V(\boldsymbol\rho-\boldsymbol\rho';z,z')`$ 的形式，需要分别保留源和观察点的高度。 Wannier 电荷分布本身也有有限厚度，这些高度应参与积分。
 
 `SLAB_WS` 是这里为层状环境定义的表示：面内采用 BvK WS 窗口，法向在一个连续区间内保留两个密度坐标，并使用所选物理环境的 Green 函数。它将 WS 有限范围与开放法向静电问题结合起来，具体算符由下文定义。
 
 ##### 物理 Green 函数与有限区域算符
 
-先选择无限平面相互作用 `V_infinity(s;z,z')`，例如自由空间、极化片或接地金属板的 Green 函数。以 `W_parallel` 表示两根面内 BvK 矢量生成的 WS 区域，每个密度在以 z0 为中心、长度为 Lz 的区间内表示：
+先选择无限平面相互作用 $`V_\infty(\mathbf s;z,z')`$，例如自由空间、极化片或接地金属板的 Green 函数。以 $`W_\parallel`$ 表示两根面内 BvK 矢量生成的 WS 区域，每个密度在以 $`z_0`$ 为中心、长度为 $`L_z`$ 的区间内表示：
 
 ```math
 I=[z_0-L_z/2,z_0+L_z/2],\qquad
@@ -1175,11 +1204,11 @@ V_\infty(\boldsymbol\rho-\boldsymbol\rho';z,z'),
 \qquad z,z'\in I.
 ```
 
-WS 窗口限制相对面内位移，两个密度则在同一 `I` 内各自保留高度坐标。区间端点规定密度的表示范围，物理静电边界由 Green 函数给定：自由空间和极化片模型在法向无界，双栅极模型在 `z0±d` 处接地。
+WS 窗口限制相对面内位移，两个密度则在同一 $`I`$ 内各自保留高度坐标。区间端点规定密度的表示范围，物理静电边界由 Green 函数给定：自由空间和极化片模型在法向无界，双栅极模型在 $`z_0\pm d`$ 处接地。
 
-[Ismail-Beigi (2006)](https://doi.org/10.1103/PhysRevB.73.233103) 的 slab 截断 `Theta(zc−|z−z'|)/|r−r'|` 限制相对法向位移。这里的构造则为两个密度各自选择连续法向区间，并保留环境 Green 函数对独立高度的依赖。已有库仑截断和层状静电学提供其物理基础，上式规定本实现采用的组合。
+[Ismail-Beigi (2006)](https://doi.org/10.1103/PhysRevB.73.233103) 的 slab 截断 $`\Theta(z_c-|z-z'|)/|\mathbf r-\mathbf r'|`$ 限制相对法向位移。这里的构造则为两个密度各自选择连续法向区间，并保留环境 Green 函数对独立高度的依赖。已有库仑截断和层状静电学提供其物理基础，上式规定本实现采用的组合。
 
-面内 WS 窗口还决定解析 Green 函数怎样进入有限网格。将无限平面 Green 函数记为 `G_infinity(p;z,z')`，带窗口算符的 Fourier 变换为
+面内 WS 窗口还决定解析 Green 函数怎样进入有限网格。将无限平面 Green 函数记为 $`G_\infty(\mathbf p;z,z')`$，带窗口算符的 Fourier 变换为
 
 ```math
 \widetilde V_W(\mathbf q;z,z')
@@ -1192,7 +1221,7 @@ G_\infty(\mathbf p;z,z').
 
 ##### 法向 Fourier–Galerkin 投影
 
-从 WAVECAR 得到的跃迁密度可表示为 Fourier 系数。为将其与上述 Green 函数收缩，在 `I` 上用 Fourier 基底表示高度依赖。取中心化坐标：
+从 WAVECAR 得到的跃迁密度可表示为 Fourier 系数。为将其与上述 Green 函数收缩，在 $`I`$ 上用 Fourier 基底表示高度依赖。取中心化坐标：
 
 ```math
 x=z-z_0,\quad g_m=\frac{2\pi m}{L_z},\quad
@@ -1215,9 +1244,9 @@ K^{\mathrm{global}}_{mn}(\mathbf q)
 =e^{i(g_n-g_m)z_0}T_{mn}(\mathbf q).
 ```
 
-即使自由核只依赖 `z−z'`，在有限区间上一般也会得到稠密矩阵。这里计算的是开放 Green 函数在两个高度坐标上的积分；周期 Green 函数所对应的循环卷积才由法向 Fourier 基底对角化。静电边界由 Green 函数决定，Fourier 基底负责表示密度及算符。
+即使自由核只依赖 $`z-z'`$，在有限区间上一般也会得到稠密矩阵。这里计算的是开放 Green 函数在两个高度坐标上的积分；周期 Green 函数所对应的循环卷积才由法向 Fourier 基底对角化。静电边界由 Green 函数决定，Fourier 基底负责表示密度及算符。
 
-计入 C 后，面内 Green 函数的量纲为 `eV Å²`，法向矩阵为 `eV Å³`。与密度收缩后，VASP 的 Fourier 和体积归一化将其转换为能量。提取 C 后，几何矩阵的量纲为 `Å²`。
+计入 $`C`$ 后，面内 Green 函数的量纲为 eV Å²，法向矩阵为 eV Å³。与密度收缩后，VASP 的 Fourier 和体积归一化将其转换为能量。提取 $`C`$ 后，几何矩阵的量纲为 Å²。
 
 空间积分可通过以下恒等式分离：
 
@@ -1233,7 +1262,7 @@ e^{-t^2\rho^2}e^{-t^2(x-x')^2}.
 
 法向密度区间应包含材料和显著密度尾部，两端放在真空内。若材料层跨越周期坐标原点，先将原子坐标展开为连续的一层，再确定其参考面。在足够真空内移动 bare 模型的区间端点，可检查剩余的尾部误差和数值误差。
 
-`WINT_Z0` 是沿法向的绝对笛卡尔坐标，单位为 Å。对 bare/Yukawa，它确定密度区间中心；对 RK_SHEET，它同时确定极化片位置；对 DUAL_GATE，它同时确定两板中面。因此，相对固定材料移动极化片或栅极会改变物理模型。几何层中心可作为初始估计，有效极化面与器件位置应依据实际环境选取。全局 Fourier 相位使这个坐标在 bare 情形下也参与有限区间投影。
+`WINT_Z0` 是沿法向的绝对笛卡尔坐标，单位为 Å。对 bare/Yukawa，它确定密度区间中心；对 `RK_SHEET`，它同时确定极化片位置；对 `DUAL_GATE`，它同时确定两板中面。因此，相对固定材料移动极化片或栅极会改变物理模型。几何层中心可作为初始估计，有效极化面与器件位置应依据实际环境选取。全局 Fourier 相位使这个坐标在 bare 情形下也参与有限区间投影。
 
 面内窗口确定有限相互作用范围。趋近无限面积极限时，需要扩大该范围，并检查法向真空和 Fourier 分辨率。物理屏蔽参数定义在这一过程中保持固定的环境。
 
@@ -1241,28 +1270,28 @@ e^{-t^2\rho^2}e^{-t^2(x-x')^2}.
 
 #### 3.7 如何选择表示及设置输入
 
-对只依赖相对位移的裸库仑或 Yukawa 相互作用，可用完整 BvK WS 单元。对于较薄的单层，只要主要法向间距落在 BvK 截断内，且密度尾部足够小，BVK_WS 与开放法向表示可以在区域内部给出一致积分。两种有限区域的完整矩阵通常不同。
+对只依赖相对位移的裸库仑或 Yukawa 相互作用，可用完整 BvK WS 单元。对于较薄的单层，只要主要法向间距落在 BvK 截断内，且密度尾部足够小，`BVK_WS` 与开放法向表示可以在区域内部给出一致积分。两种有限区域的完整矩阵通常不同。
 
-极化片与栅极需要保留相互作用对各自高度的依赖。当前实现用 SLAB_WS 表示 RK_SHEET 和 DUAL_GATE；它也为 bare/Yukawa 提供保留厚度的开放法向参考。 RK2D 先将跃迁密度沿高度积分，使用同一面内 WS 基础，因此同样选择 SLAB_WS，法向积分消除了对 Z0 的依赖。
+极化片与栅极需要保留相互作用对各自高度的依赖。当前实现用 `SLAB_WS` 表示 `RK_SHEET` 和 `DUAL_GATE`；它也为 bare/Yukawa 提供保留厚度的开放法向参考。 `RK2D` 先将跃迁密度沿高度积分，使用同一面内 WS 基础，因此同样选择 `SLAB_WS`，法向积分消除了对 $`z_0`$ 的依赖。
 
-| 比较项 | BVK_WS | SLAB_WS |
+| 比较项 | `BVK_WS` | `SLAB_WS` |
 |---|---|---|
 | 有限区域 | 完整三维 BvK WS 单元 | 面内 BvK WS 窗口与每个密度的法向区间 |
 | 法向静电作用 | 只依赖相对坐标的核 | 保留两个高度的开放或栅极边界 Green 函数 |
 | Fourier 算符 | 完整倒空间中的标量乘子 | 面内动量分量与法向矩阵 |
-| 物理核 | BARE、YUKAWA | BARE、YUKAWA、RK_SHEET、RK2D、DUAL_GATE |
+| 物理核 | `BARE`、`YUKAWA` | `BARE`、`YUKAWA`、`RK_SHEET`、`RK2D`、`DUAL_GATE` |
 | 几何 | 一般晶格度量 | 第三矢量垂直面内，法向一个 k 点 |
 | 参考面 | 无需独立参考面 | 区间中心，并在相应模型中确定极化片或栅极位置 |
 | 主要用途 | 体材料或法向截断范围合适的局域单层 | 层状环境屏蔽及与其配套的有限厚度参考 |
 
-补丁通过 `HFRCUT=-2` 启用 WS 截断。所有显式 WINT 模型，包括采用 SLAB_WS 的模型，都需要这一设置；它用于固定 Wannier 基底的 `ALGO=2E4WA` 相互作用计算。`WINT_BOUNDARY` 选择有限区域表示，`WINT_KERNEL` 选择物理核。
+补丁通过 `HFRCUT=-2` 启用 WS 截断。所有显式 WINT 模型，包括采用 `SLAB_WS` 的模型，都需要这一设置；它用于固定 Wannier 基底的 `ALGO=2E4WA` 相互作用计算。`WINT_BOUNDARY` 选择有限区域表示，`WINT_KERNEL` 选择物理核。
 
 未打补丁的 VASP 6.6.1 源码将所有负值，包括 `-2`，送入自动球形分支。本补丁为 `-2` 赋予 WS 含义。
 
 | 输入 | 定义 |
 |---|---|
 | `HFRCUT=-2` | 在 Wannier 积分工作流中启用本补丁的 WS 表示 |
-| `WINT_BOUNDARY=BVK_WS` | 完整 BvK WS 区域；显式 BARE/YUKAWA 的默认边界 |
+| `WINT_BOUNDARY=BVK_WS` | 完整 BvK WS 区域；显式 `BARE`/`YUKAWA` 的默认边界 |
 | `WS_NGRID` | 三分量核 FFT 网格；默认自动选择 |
 | `WS_TOL` | 核构造及内部积分控制，默认 `1e-8` |
 
@@ -1274,7 +1303,7 @@ WINT_KERNEL = BARE
 WINT_BOUNDARY = BVK_WS
 ```
 
-同一裸核的开放法向参考改用 SLAB_WS，并指定实际材料的区间中心。以下示例假定参考面位于沿法向的笛卡尔坐标 0 Å：
+同一裸核的开放法向参考改用 `SLAB_WS`，并指定实际材料的区间中心。以下示例假定参考面位于沿法向的笛卡尔坐标 0 Å：
 
 ```text
 HFRCUT = -2
@@ -1291,23 +1320,41 @@ WINT_Z0 = 0.0
 | 晶格和 k 网格 | 第三矢量垂直面内；法向一个 k 点；面内可以为斜晶格 |
 | `WS_NGRID` | 前两项细化面内核 FFT；本边界不使用第三项 |
 
-`WINT_NORMAL` 必须平行于第三晶格矢量，默认取该矢量方向。面内晶格可以倾斜。 WS 构造使用完整、自动生成的 Γ 中心均匀网格，当前路径保持 Fock 网格完整，要求关闭网格约化、平移及奇偶子网格选项。对 SLAB_WS，前两项 `WS_NGRID` 控制面内核分辨率，法向密度精度通过密度 Fourier 截断与网格收敛。
+`WINT_NORMAL` 必须平行于第三晶格矢量，默认取该矢量方向。面内晶格可以倾斜。 WS 构造使用完整、自动生成的 Γ 中心均匀网格，当前路径保持 Fock 网格完整，要求关闭网格约化、平移及奇偶子网格选项。对 `SLAB_WS`，前两项 `WS_NGRID` 控制面内核分辨率，法向密度精度通过密度 Fourier 截断与网格收敛。
 
 省略全部 `WINT_*` 标签时，`HFRCUT=-2` 沿用原有 bare-WS 的 PAW 补偿及局域修正构造；显式 `WINT_KERNEL=BARE` 使用完整重建密度。两者计算同一裸库仑律，以不同有限基组密度构造求值。比较不同物理核时，显式路径提供共同的密度参考，具体 PAW 投影见后文。
 
-屏蔽计算按第 4 节选择物理核及其参数，并保持最终 Wannier 基底固定。当前双栅极积分要求两块板包围整个密度区间，因此还需满足 `d>Lz/2`。
+屏蔽计算按第 4 节选择物理核及其参数，并保持最终 Wannier 基底固定。当前双栅极积分要求两块板包围整个密度区间，因此还需满足 $`d>L_z/2`$。
 
 <a id="zh-kernels"></a>
 
 ### 4. 物理相互作用模型
 
-将真空中的库仑作用投影到 DFT 得到的 Wannier 基底，得到的是裸相互作用矩阵元。低能模型只保留选定的电子自由度；周围介质的极化、目标空间以外的材料电子响应，以及邻近金属栅极上的诱导电荷，都会改变这些低能电子之间的相互作用。将这些响应归入模型参数后，得到一般具有频率依赖的有效相互作用；以下核描述其中选定的静态屏蔽模型。
+对于超大晶胞，微观屏蔽计算的代价可能远高于构造低能模型所需的少数 Wannier 轨道。cRPA 需要计算涉及大量占据态和非占据态的电子跃迁，并构造介电响应。为降低这一步的成本，可以用静态模型描述屏蔽核，再将其投影到已有的 Wannier 基底。
+
+cRPA 将极化响应分为目标空间内部的跃迁与其余通道，后者包含涉及目标空间外能带（remote bands）的极化过程：
+
+```math
+P=P_{\mathrm{target}}+P_r,
+\qquad
+W_r(\omega)=[1-vP_r(\omega)]^{-1}v.
+```
+
+其中，$`v`$ 为裸库仑算符，$`W_r`$ 为尚未计入目标空间内部极化的部分屏蔽相互作用。将其投影到 Wannier 轨道，得到低能模型的相互作用参数，见参考文献 [14](#references--参考文献)。微观 cRPA 路线和模型核路线都包含这一步投影；模型路线用选定的静态核近似部分屏蔽相互作用中所关心的矩阵元：
+
+```math
+\mathcal B_{W_r(0)}[\rho,\sigma]
+\simeq
+\mathcal B_{K_{\mathrm{model}}}[\rho,\sigma].
+```
+
+双线性形式 $`\mathcal B`$ 的定义见第 1 节。模型参数可以由材料极化率、较小参考体系的计算和器件几何约束。计算时固定保存的 Wannier 轨道，分别投影所选的核。投影 $`v`$ 得到裸相互作用参考，投影屏蔽模型则计入其参数和静电边界所描述的响应，栅极作用通过相应器件环境的 Green 函数引入。
 
 这一差别对二维材料尤其重要，因为电场会延伸到材料层之外，进入基底和器件环境。介质极化和金属栅极同时改变相互作用的强度与空间范围。在固定 Wannier 基底和单粒子带宽时，它们会改变 onsite 相互作用相对于带宽的大小，以及 onsite 与 off-center 项之间的比例。
 
 因此，核的选择应与所研究的物理响应相对应：Yukawa 描述均匀介质中的局域屏蔽，Rytova–Keldysh 模型描述集中在薄层上的极化，双栅极 Green 函数描述两块接地金属板上的诱导电荷。第 3 节的 WS 构造为这些核提供有限区域表示，各核则定义这一范围内的实际静电环境。
 
-用于后续 fRG 计算时，屏蔽参数应对应环境以及从目标模型中消去的电子过程，保留的低能过程则由 fRG 流处理。这是低能模型中部分屏蔽相互作用的构造原则，见参考文献 [14](#references--参考文献)。`epsilon` 为相对介电常数，`epsilon_0` 为真空介电常数。屏蔽长度设定物理尺度，FFT 参数控制数值分辨率。
+用于后续 fRG 计算时，屏蔽参数应对应环境以及从目标模型中消去的电子过程，保留的低能过程则由 fRG 流处理。这是低能模型中部分屏蔽相互作用的构造原则，见参考文献 [14](#references--参考文献)。$`\epsilon`$ 为相对介电常数，$`\epsilon_0`$ 为真空介电常数。屏蔽长度设定物理尺度，FFT 参数控制数值分辨率。
 
 #### 4.1 真空中的库仑排斥
 
@@ -1316,15 +1363,15 @@ K_0(\mathbf r,\mathbf r')=\frac{C}{|\mathbf r-\mathbf r'|},
 \qquad C=\frac{e^2}{4\pi\epsilon_0}.
 ```
 
-裸核提供真空中的相互作用参考。归一化轨道越集中，其静电自相互作用通常越大，从而提高 onsite 排斥。远离有限区域边界时，相隔足够远的局域电荷云趋于点电荷的 `C/距离` 相互作用。电子结构计算确定 Wannier 电荷云的形状，介电屏蔽则由相互作用核引入。
+裸核提供真空中的相互作用参考。归一化轨道越集中，其静电自相互作用通常越大，从而提高 onsite 排斥。远离有限区域边界时，相隔足够远的局域电荷云趋于点电荷的 $`C/R`$ 相互作用，其中 $`R`$ 为电荷云的中心间距。电子结构计算确定 Wannier 电荷云的形状，介电屏蔽则由相互作用核引入。
 
 | 关键词 | 定义 |
 |---|---|
 | `WINT_KERNEL=BARE` | 显式完整 PAW bare 投影 |
-| `WINT_BOUNDARY` | 默认 BVK_WS，也可选 SLAB_WS |
-| `WINT_Z0` | 仅 SLAB_WS 必需，用于确定数值积分区间 |
+| `WINT_BOUNDARY` | 默认 `BVK_WS`，也可选 `SLAB_WS` |
+| `WINT_Z0` | 仅 `SLAB_WS` 必需，用于确定数值积分区间 |
 
-显式 BARE 应省略 `WINT_EPS` 和屏蔽长度。作为层状屏蔽模型的有限厚度参考时，使用与之相同的 SLAB_WS 区域和 Z0。
+显式 `BARE` 应省略 `WINT_EPS` 和屏蔽长度。作为层状屏蔽模型的有限厚度参考时，使用与之相同的 `SLAB_WS` 区域和 $`z_0`$。
 
 #### 4.2 均匀介质中的 Yukawa 屏蔽
 
@@ -1339,22 +1386,22 @@ K_Y(r)=\frac{C}{\epsilon}\frac{e^{-\kappa r}}r,
 \widetilde K_Y(\mathbf Q)=\frac{4\pi C}{\epsilon(Q^2+\kappa^2)}.
 ```
 
-逆长度 kappa 决定指数衰减长度 `lambda=1/kappa`。这一函数形式源于 [Yukawa (1935)](https://doi.org/10.11429/ppmsj1919.17.0_48)，这里用它描述上述方程定义的静态电子屏蔽。改变这一长度，可以研究相互作用范围对低能物理的影响。下文的金属栅极则通过空间边界条件产生位置相关的屏蔽响应。
+逆长度 $`\kappa`$ 决定指数衰减长度 $`\lambda=1/\kappa`$。这一函数形式源于 [Yukawa (1935)](https://doi.org/10.11429/ppmsj1919.17.0_48)，这里用它描述上述方程定义的静态电子屏蔽。改变这一长度，可以研究相互作用范围对低能物理的影响。下文的金属栅极则通过空间边界条件产生位置相关的屏蔽响应。
 
 | 关键词 | 定义 |
 |---|---|
 | `WINT_KERNEL=YUKAWA` | 指数屏蔽的径向相互作用 |
 | `WINT_KAPPA` | 必需，逆屏蔽长度 Å⁻¹，有限非负 |
 | `WINT_EPS` | 均匀背景相对介电常数，默认 1，有限正值 |
-| `WINT_BOUNDARY` | BVK_WS 或 SLAB_WS；后者还需 Z0 |
+| `WINT_BOUNDARY` | `BVK_WS` 或 `SLAB_WS`；后者还需 `WINT_Z0` |
 
-kappa=0 时，核退化为同一区域上的 bare/epsilon；再取 epsilon=1，即恢复显式 BARE。随着 kappa 增大，短尺度相对远程作用的贡献增加，需要相应的密度分辨率。
+$`\kappa=0`$ 时，核退化为同一区域上的 $`K_0/\epsilon`$；再取 $`\epsilon=1`$，即恢复显式 `BARE`。随着 $`\kappa`$ 增大，短尺度相对远程作用的贡献增加，需要相应的密度分辨率。
 
 #### 4.3 极化片屏蔽与有限厚度轨道
 
 二维绝缘体的诱导极化集中在材料附近，电场则延伸到周围三维介质，因此屏蔽随面内波长变化。理想极化片描述这一响应，Wannier 电荷云同时保留有限的高度分布。
 
-把极化片放在 z0，并用下面的 Poisson 问题定义 r0：
+把极化片放在 $`z_0`$，并用下面的 Poisson 问题定义 $`r_0`$：
 
 ```math
 \left[-\partial_z^2+q^2+2r_0q^2\delta(z-z_0)\right]
@@ -1379,7 +1426,7 @@ G_s(q;z,z')=\frac{2\pi C}{\epsilon q}
 
 这些条件确定极化片的诱导响应，解出上面的有限高度形式。源与观察点均在片上时，它退化为 [Cudazzo、Tokatly 与 Rubio (2011)](https://doi.org/10.1103/PhysRevB.84.085406) 推导的 Rytova–Keldysh 相互作用，其基础是 Rytova 与 Keldysh 的早期工作 [7–9](#references--参考文献)。
 
-在极化片上，`r0 q/(1+r0 q)` 对短波长场的抑制更强。电荷位于片外时，指数因子还按它们到极化片的距离调节诱导响应。对于同侧且远离片的两团电荷，相对修正在足够大的 q 下消失；远距离面内作用保留 `C/(epsilon rho)` 尾部。片外重合电荷具有局域三维库仑奇点，片上电荷则具有对数 RK 奇点。这一近似把极化材料视为均匀背景介质中的单个理想平面。
+在极化片上，$`r_0q/(1+r_0q)`$ 对短波长场的抑制更强。电荷位于片外时，指数因子还按它们到极化片的距离调节诱导响应。对于同侧且远离片的两团电荷，相对修正在足够大的 $`q`$ 下消失；远距离面内作用保留 $`C/(\epsilon\rho)`$ 尾部。片外重合电荷具有局域三维库仑奇点，片上电荷则具有对数 RK 奇点。这一近似把极化材料视为均匀背景介质中的单个理想平面。
 
 | 关键词 | 定义 |
 |---|---|
@@ -1389,7 +1436,7 @@ G_s(q;z,z')=\frac{2\pi C}{\epsilon q}
 | `WINT_Z0` | 必需，极化片位置和积分区间中心，Å |
 | `WINT_EPS` | 均匀背景相对介电常数，默认 1，有限正值 |
 
-上述方程定义 r0 及其背景介电约定。从二维极化率换算时，需采用一致的单位和同一介电约定。r0=0 时，极化片响应消失，剩下有限高度的 bare/epsilon 相互作用。
+上述方程定义 $`r_0`$ 及其背景介电约定。从二维极化率换算时，需采用一致的单位和同一介电约定。$`r_0=0`$ 时，极化片响应消失，剩下有限高度的 $`K_0/\epsilon`$ 相互作用。
 
 #### 4.4 严格二维的 Rytova–Keldysh 相互作用
 
@@ -1405,7 +1452,7 @@ K_{2D}(\rho)=\frac{\pi C}{2\epsilon r_0}
 \rho_{2D}(\boldsymbol\rho)=\int_I dz\,\rho_{3D}(\boldsymbol\rho,z).
 ```
 
-r0>0 时，实空间表达式包含 Struve 函数 H0 和第二类 Bessel 函数 Y0，其渐近形式为
+$`r_0>0`$ 时，实空间表达式包含 Struve 函数 $`H_0`$ 和第二类 Bessel 函数 $`Y_0`$，其渐近形式为
 
 ```math
 K_{2D}(\rho)\simeq
@@ -1422,15 +1469,15 @@ K_{2D}(\rho)\simeq
 |---|---|
 | `WINT_KERNEL=RK2D` | 作用于法向积分后密度的 RK 核 |
 | `WINT_BOUNDARY=SLAB_WS` | 所需的面内有限表示 |
-| `WINT_R0` | 必需，屏蔽长度 Å，有限非负，约定同 RK_SHEET |
+| `WINT_R0` | 必需，屏蔽长度 Å，有限非负，约定同 `RK_SHEET` |
 | `WINT_EPS` | 背景相对介电常数，默认 1，有限正值 |
 | `WINT_Z0` | 不设置；法向坐标已被积分掉 |
 
-r0=0 时，极限核是平面的 `C/(epsilon rho)` 相互作用。恢复有限厚度 BARE 还需保留密度的法向坐标。这里的二维指电荷及极化模型，电场在三维空间中传播。
+$`r_0=0`$ 时，极限核是平面的 $`C/(\epsilon\rho)`$ 相互作用。恢复有限厚度 `BARE` 还需保留密度的法向坐标。这里的二维指电荷及极化模型，电场在三维空间中传播。
 
 #### 4.5 两块接地金属板的镜像屏蔽
 
-金属栅极通过诱导表面电荷屏蔽相互作用。两块理想接地板位于 `z=z0−d` 与 `z=z0+d`，令 `x=z−z0`，对应的静电问题为
+金属栅极通过诱导表面电荷屏蔽相互作用。两块理想接地板位于 $`z=z_0-d`$ 与 $`z=z_0+d`$，令 $`x=z-z_0`$，对应的静电问题为
 
 ```math
 (-\partial_x^2+q^2)G_g(q;x,x')
@@ -1451,7 +1498,7 @@ G_g(q;0,0)=\frac{2\pi C}{\epsilon q}\tanh(qd),
 \qquad G_g(0;0,0)=\frac{2\pi Cd}{\epsilon}.
 ```
 
-平板 Green 函数及其镜像构造见 [Takae–Onuki (2013)](https://doi.org/10.1063/1.4821085)。 [Throckmorton–Vafek (2012)](https://doi.org/10.1103/PhysRevB.86.115447) 的电子模型也采用平行板相互作用。这里 d 表示中面到每一块板的距离，两板间距为 2d。
+平板 Green 函数及其镜像构造见 [Takae–Onuki (2013)](https://doi.org/10.1063/1.4821085)。 [Throckmorton–Vafek (2012)](https://doi.org/10.1103/PhysRevB.86.115447) 的电子模型也采用平行板相互作用。这里 $`d`$ 表示中面到每一块板的距离，两板间距为 $`2d`$。
 
 对于中面上的点电荷，镜像级数也可展开为横向模：
 
@@ -1463,17 +1510,17 @@ K_g(\rho;0,0)=\frac{C}{\epsilon}
 K_0\left(\frac{(2j+1)\pi\rho}{2d}\right).
 ```
 
-最低横向模控制远距离尾部 `exp[−pi rho/(2d)]/sqrt(rho)`，衰减尺度为 `2d/pi`。完整的 gate 核包含全部横向模和两个电荷高度，因此同时描述空间衰减，以及电荷接近上板或下板时响应的变化。
+最低横向模控制远距离尾部 $`\exp[-\pi\rho/(2d)]/\sqrt{\rho}`$，衰减尺度为 $`2d/\pi`$。完整的 gate 核包含全部横向模和两个电荷高度，因此同时描述空间衰减，以及电荷接近上板或下板时响应的变化。
 
 | 关键词 | 定义 |
 |---|---|
 | `WINT_KERNEL=DUAL_GATE` | 保留电荷高度的双接地板模型 |
 | `WINT_BOUNDARY=SLAB_WS` | 所需的边界表示 |
-| `WINT_GATE_D` | 必需，中面到每侧板的距离 d，Å；两板间距为 2d |
+| `WINT_GATE_D` | 必需，中面到每侧板的距离 $`d`$，Å；两板间距为 $`2d`$ |
 | `WINT_Z0` | 必需，两板中面及积分区间中心，Å |
 | `WINT_EPS` | 均匀间隔介质的相对介电常数，默认 1，有限正值 |
 
-当前实现将整个密度区间放在两板之间，因此要求 `d>Lz/2`。这一条件来自这里采用的积分区域。d 很大时，算符趋于有限高度的 bare/epsilon。Green 函数按上式的归一化进入每个两电子积分，多体 Hamiltonian 中的 1/2 用于成对计数。单电子镜像势另行贡献于跃迁和 onsite Hamiltonian。
+当前实现将整个密度区间放在两板之间，因此要求 $`d>L_z/2`$。这一条件来自这里采用的积分区域。$`d`$ 很大时，算符趋于有限高度的 $`K_0/\epsilon`$。Green 函数按上式的归一化进入每个两电子积分，多体 Hamiltonian 中的 1/2 用于成对计数。单电子镜像势另行贡献于跃迁和 onsite Hamiltonian。
 
 <a id="zh-use"></a>
 
@@ -1500,7 +1547,7 @@ PAW 用平滑平面波部分和原子中心重建项表示波函数。为使所�
 3. 固定最终 Wannier gauge；如需 SAWF，先由外部工具完成并导出兼容 VASP 的 WANPROJ。
 4. 运行固定轨道的 `ALGO=2E4WA`，投影所选相互作用。
 
-相互作用计算支持 CPU NCL、`ISPIN=1`、`NCORE=1`，包括非共线 SOC spinor。若材料参考面位于笛卡尔 z=0，可在已有输入中加入以下双栅极设置：
+相互作用计算支持 CPU NCL、`ISPIN=1`、`NCORE=1`，包括非共线 SOC spinor。若材料参考面位于笛卡尔 $`z=0`$，可在已有输入中加入以下双栅极设置：
 
 ```text
 ALGO = 2E4WA
@@ -1514,17 +1561,17 @@ WINT_GATE_D = 100.0
 
 参考面按实际结构设定。本例中，每块板距离该面 100 Å，即 10 nm。比较不同核时，保持 Wannier 基底和 PAW 数据集固定。VASP 按原有指标约定写出 VIJKL 和 VRijkl，并在文件头与 OUTCAR 中记录模型参数。后续将这些相互作用与同一 Wannier 基底中的 SAWF 单粒子 Hamiltonian 配套使用。
 
-标量 epsilon 假定均匀各向同性介质，各向异性基底或多层器件则需要合适的有效模型，或更一般的 Poisson Green 函数。当前极化片和栅极选项分别求解各自的静电问题；同时包含二者的器件需要相应的组合 Green 函数。
+标量 $`\epsilon`$ 假定均匀各向同性介质，各向异性基底或多层器件则需要合适的有效模型，或更一般的 Poisson Green 函数。当前极化片和栅极选项分别求解各自的静电问题；同时包含二者的器件需要相应的组合 Green 函数。
 
 <a id="zh-convergence"></a>
 
 ### 6. 收敛与物理解释
 
 - **轨道模型：** 选带、Wannier gauge 和单粒子能带表示决定参与相互作用的电荷云。
-- **法向真空与参考面：** I 应包含显著密度尾部。对 bare，在真空中移动区间端点可检查有限区域表示；相对固定材料移动极化片或栅极，则改变了物理环境。
+- **法向真空与参考面：** $`I`$ 应包含显著密度尾部。对 bare，在真空中移动区间端点可检查有限区域表示；相对固定材料移动极化片或栅极，则改变了物理环境。
 - **空间范围：** 增大 BvK k 网格，扩大 WS 相互作用范围。
-- **核分辨率：** 在固定范围内细化 WS_NGRID。WS_TOL 设定内部构造与积分容差，所得矩阵元的收敛情况决定其数值精度。
-- **密度分辨率：** 联合收敛 VCUTOFF 与 NGX/NGY/NGZ。短程及 onsite 作用涉及大动量密度分量，单独增大 VCUTOFF 可能达到现有 FFT 网格的分辨率上限。
+- **核分辨率：** 在固定范围内细化 `WS_NGRID`。`WS_TOL` 设定内部构造与积分容差，所得矩阵元的收敛情况决定其数值精度。
+- **密度分辨率：** 联合收敛 `VCUTOFF` 与 `NGX`/`NGY`/`NGZ`。短程及 onsite 作用涉及大动量密度分量，单独增大 `VCUTOFF` 可能达到现有 FFT 网格的分辨率上限。
 
 扩大密度网格后，若现有 CHGCAR 不再兼容，可在固定 WAVECAR 的相互作用投影中采用 `ICHARG=12`。单粒子模型继续使用既定的 SAWF Hamiltonian。在上述数值收敛检查中，屏蔽长度和介电常数始终定义所研究的物理模型。
 
