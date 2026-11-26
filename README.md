@@ -492,7 +492,7 @@ Choose the representation from the physical operator and charge geometry:
 | Finite domain | Full three-dimensional BvK WS cell in the relative coordinate | In-plane BvK WS window; each density occupies the normal interval $`I`$ |
 | Normal electrostatics | Translation-invariant relative-coordinate kernel | Open or gate-bounded Green function retaining both heights |
 | Fourier operator | Scalar at each three-dimensional momentum | Matrix in normal Fourier indices at each planar momentum |
-| Implemented models | Bare Coulomb, Yukawa | Bare Coulomb, Yukawa, finite-height RK, `RK2D`, dual gate |
+| Implemented models | Bare Coulomb, Yukawa | Bare Coulomb, Yukawa, finite-height RK, `RK2D`, full and radial dual gate |
 | Lattice geometry | General three-dimensional metric | Perpendicular third vector and one normal k point; oblique in-plane cells supported |
 | Reference plane | No independent height reference | Density-interval center; also the sheet position or gate midpoint when applicable |
 | Typical use | Bulk interactions or a localized layer with a suitable normal cutoff | Layer-resolved environmental screening and a matching finite-height reference |
@@ -552,7 +552,7 @@ WINT_Z0 = 0.0
 
 Set the reference coordinate from the actual structure. Screened calculations
 then select the desired kernel and its parameters from Section 4 while
-keeping the finalized Wannier basis fixed. The current dual-gate integration
+keeping the finalized Wannier basis fixed. The full `DUAL_GATE` integration
 requires both plates to enclose the complete interval, giving $`d>L_z/2`$.
 
 
@@ -851,6 +851,31 @@ $`K_0/\epsilon`$. The Green function enters each two-electron integral with the
 normalization shown above; the many-body Hamiltonian supplies the factor
 1/2 for pair counting. The one-electron image potential contributes separately
 to the hopping and onsite Hamiltonian.
+
+#### 4.6 Radial extension of the midplane gate interaction
+
+For charges in the midplane, each successive image lies a distance $`L=2d`$ farther along the normal and has opposite sign to the previous image. Equation (29) of Throckmorton and Vafek gives the resulting midplane interaction. A radial extension evaluates this profile at the three-dimensional separation $`s=|\mathbf r-\mathbf r'|`$. An optional Ohno length $`a`$ softens its short-range part. Together these choices give
+
+```math
+K_a(s)=\frac{C}{\epsilon}\sum_{j=-\infty}^{\infty}
+\frac{(-1)^j}{\sqrt{s^2+a^2+j^2 L^2}}
+=\frac{4C}{\epsilon L}\sum_{n=0}^{\infty}
+K_0\left(\frac{(2n+1)\pi}{L}\sqrt{s^2+a^2}\right).
+```
+
+At $`a=0`$ the two gate models coincide for midplane point charges. Away from that plane the radial extension retains the relative height of the charges. Translating both charges together leaves their radial interaction unchanged, whereas in the full plate Green function their distances to the metal surfaces enter separately. The patch integrates both kernels against the same three-dimensional PAW transition densities in the same slab domain.
+
+A positive $`a`$ gives a finite point interaction at coincidence. Fischer et al. specify $`a=C/(\epsilon U_{\rm reg})`$ in their Ohno model. For an ideal pair of plates, match the $`K_0`$ argument in their published Eq. (12) by setting its denominator $`\xi=L=2d`$. The projected onsite energy also depends on the Wannier density. [Image series, Eq. (29)](https://doi.org/10.1103/PhysRevB.86.115447) · [Fischer et al., supplementary Eqs. (11)–(13)](https://journals.aps.org/prx/supplemental/10.1103/gfzx-rrcr/supplementary.pdf)
+
+The `dual-gate-bare` and `dual-gate` options in RESPACK use the same continuous radial profiles before finite-cell integration. Its gate parameter is the total plate spacing. [Independent RESPACK implementation](https://gitlab.com/jonas_reimann/respack/-/blob/549c15c8793290003f9f94ad0581e6741b9edd92/src/calc_int/m_coulomb_kernel.f90)
+
+| Input | Meaning |
+|---|---|
+| `WINT_KERNEL=DUAL_GATE_RADIAL` | Midplane gate profile at full relative distance |
+| `WINT_BOUNDARY=SLAB_WS`, `WINT_Z0` | Same planar WS domain and normal density interval as the full gate calculation. Here `WINT_Z0` sets the interval center. |
+| `WINT_GATE_D` | Positive half spacing in Å |
+| `WINT_OHNO_A` | Nonnegative softening length in Å, default 0. Only the radial gate reads this tag. |
+| `WINT_EPS` | Uniform relative permittivity, default 1 |
 
 <a id="en-use"></a>
 
@@ -1279,7 +1304,7 @@ e^{-t^2\rho^2}e^{-t^2(x-x')^2}.
 | 有限区域 | 完整三维 BvK WS 单元 | 面内 BvK WS 窗口与每个密度的法向区间 |
 | 法向静电作用 | 只依赖相对坐标的核 | 保留两个高度的开放或栅极边界 Green 函数 |
 | Fourier 算符 | 完整倒空间中的标量乘子 | 面内动量分量与法向矩阵 |
-| 物理核 | `BARE`、`YUKAWA` | `BARE`、`YUKAWA`、`RK_SHEET`、`RK2D`、`DUAL_GATE` |
+| 物理核 | `BARE`、`YUKAWA` | `BARE`、`YUKAWA`、`RK_SHEET`、`RK2D`、`DUAL_GATE`、`DUAL_GATE_RADIAL` |
 | 几何 | 一般晶格度量 | 第三矢量垂直面内，法向一个 k 点 |
 | 参考面 | 无需独立参考面 | 区间中心，并在相应模型中确定极化片或栅极位置 |
 | 主要用途 | 体材料或法向截断范围合适的局域单层 | 层状环境屏蔽及与其配套的有限厚度参考 |
@@ -1324,7 +1349,7 @@ WINT_Z0 = 0.0
 
 省略全部 `WINT_*` 标签时，`HFRCUT=-2` 沿用原有 bare-WS 的 PAW 补偿及局域修正构造；显式 `WINT_KERNEL=BARE` 使用完整重建密度。两者计算同一裸库仑律，以不同有限基组密度构造求值。比较不同物理核时，显式路径提供共同的密度参考，具体 PAW 投影见后文。
 
-屏蔽计算按第 4 节选择物理核及其参数，并保持最终 Wannier 基底固定。当前双栅极积分要求两块板包围整个密度区间，因此还需满足 $`d>L_z/2`$。
+屏蔽计算按第 4 节选择物理核及其参数，并保持最终 Wannier 基底固定。完整 `DUAL_GATE` 积分要求两块板包围整个密度区间，因此还需满足 $`d>L_z/2`$。
 
 <a id="zh-kernels"></a>
 
@@ -1521,6 +1546,31 @@ K_0\left(\frac{(2j+1)\pi\rho}{2d}\right).
 | `WINT_EPS` | 均匀间隔介质的相对介电常数，默认 1，有限正值 |
 
 当前实现将整个密度区间放在两板之间，因此要求 $`d>L_z/2`$。这一条件来自这里采用的积分区域。$`d`$ 很大时，算符趋于有限高度的 $`K_0/\epsilon`$。Green 函数按上式的归一化进入每个两电子积分，多体 Hamiltonian 中的 1/2 用于成对计数。单电子镜像势另行贡献于跃迁和 onsite Hamiltonian。
+
+#### 4.6 双栅极中面势的径向延拓
+
+对于位于中面的点电荷，沿法向每隔一个板间距 $`L=2d`$ 出现一个镜像，相邻镜像交替变号。Throckmorton 和 Vafek 的式 (29) 给出它们在中面产生的势。要得到便于比较的径向模型，先将面内距离换为两点的三维距离 $`s=|\mathbf r-\mathbf r'|`$，再引入可选的 Ohno 长度 $`a`$ 来调节短程排斥。镜像和与等价的 Bessel 展开为
+
+```math
+K_a(s)=\frac{C}{\epsilon}\sum_{j=-\infty}^{\infty}
+\frac{(-1)^j}{\sqrt{s^2+a^2+j^2L^2}}
+=\frac{4C}{\epsilon L}\sum_{n=0}^{\infty}
+K_0\left(\frac{(2n+1)\pi}{L}\sqrt{s^2+a^2}\right).
+```
+
+当 $`a=0`$ 且两点都在中面时，该式等于完整的平板 Green 函数。径向延拓保留两点的高度差，同时移动两电荷会保持势值。完整平板解则分别依赖两点到金属板的距离。补丁使用同一套三维 PAW 跃迁密度和相同的 slab 积分域计算两种核。
+
+正的 $`a`$ 使重合点的势保持有限。Fischer 等的 Ohno 模型取 $`a=C/(\epsilon U_{\rm reg})`$。用其发表的式 (12) 做定量比较时，Bessel 函数自变量的分母对应 $`\xi=L=2d`$。投影后的在位能还取决于 Wannier 电荷在空间中的分布。[镜像和，式 (29)](https://doi.org/10.1103/PhysRevB.86.115447) · [Fischer 等，补充式 (11)–(13)](https://journals.aps.org/prx/supplemental/10.1103/gfzx-rrcr/supplementary.pdf)
+
+RESPACK 的 `dual-gate-bare` 和 `dual-gate` 在有限晶胞积分前使用相同的连续径向势，其栅距参数取两板总间距。[RESPACK 的独立实现](https://gitlab.com/jonas_reimann/respack/-/blob/549c15c8793290003f9f94ad0581e6741b9edd92/src/calc_int/m_coulomb_kernel.f90)
+
+| 关键词 | 定义 |
+|---|---|
+| `WINT_KERNEL=DUAL_GATE_RADIAL` | 将中面双栅势延拓到三维相对距离 |
+| `WINT_BOUNDARY=SLAB_WS`、`WINT_Z0` | 使用与完整双栅极模型相同的面内 WS 区域和法向密度区间。`WINT_Z0` 在此设定区间中心。 |
+| `WINT_GATE_D` | 两板间距的一半，单位 Å，取正值 |
+| `WINT_OHNO_A` | Ohno 软化长度，单位 Å，取非负值，默认 0，仅用于径向双栅极 |
+| `WINT_EPS` | 均匀背景相对介电常数，默认 1 |
 
 <a id="zh-use"></a>
 

@@ -542,7 +542,7 @@ diff --git a/src/mlwf.F b/src/mlwf.F
 diff --git a/src/fock_glb.F b/src/fock_glb.F
 --- a/src/fock_glb.F
 +++ b/src/fock_glb.F
-@@ -62,6 +62,22 @@
+@@ -62,6 +62,23 @@
  
    !> cutoff for HF kernel applicable to 0 and 3 dimensional systems (molecules)
    REAL(q),SAVE :: HFRCUT=0
@@ -552,13 +552,14 @@ diff --git a/src/fock_glb.F b/src/fock_glb.F
 +  INTEGER, SAVE :: WINT_CUTOFF_MODE=WINT_CUTOFF_NATIVE
 +  ! Frozen-orbital physical interaction, independent of cutoff geometry.
 +  INTEGER, PARAMETER :: WINT_MODEL_BARE=0, WINT_MODEL_YUKAWA=1, WINT_MODEL_RK_SHEET=2, &
-+     WINT_MODEL_RK2D=3, WINT_MODEL_DUAL_GATE=4
++     WINT_MODEL_RK2D=3, WINT_MODEL_DUAL_GATE=4, WINT_MODEL_DUAL_GATE_RADIAL=5
 +  INTEGER, PARAMETER :: WINT_BOUNDARY_BVK=0, WINT_BOUNDARY_SLAB=1
 +  INTEGER, SAVE :: WINT_BOUNDARY=WINT_BOUNDARY_BVK
 +  INTEGER, SAVE :: WINT_MODEL=WINT_MODEL_BARE
 +  LOGICAL, SAVE :: WINT_ENABLED=.FALSE.
 +  REAL(q), SAVE :: WINT_KAPPA=0._q, WINT_EPS=1._q
 +  REAL(q), SAVE :: WINT_R0=0._q, WINT_GATE_D=0._q, WINT_Z0=0._q
++  REAL(q), SAVE :: WINT_OHNO_A=0._q
 +  REAL(q), SAVE :: WINT_NORMAL(3)=0._q, WINT_NORMAL_USED(3)=0._q, WINT_LAYER_LZ=0._q
 +  REAL(q), SAVE :: WS_TOL=1.0e-8_q
 +  INTEGER, SAVE :: WS_NGRID(3)=0
@@ -585,7 +586,7 @@ diff --git a/src/fock.F b/src/fock.F
        REAL(q) RDUM
        COMPLEX(q) CDUM
        LOGICAL LOPEN,LDUM
-@@ -106,6 +107,13 @@
+@@ -106,6 +107,19 @@
        HFSCREEN=0.0_q
        HFSCREENC=0.0_q
        HFRCUT=0.0_q
@@ -594,12 +595,18 @@ diff --git a/src/fock.F b/src/fock.F
 +      WINT_ENABLED=.FALSE.
 +      WINT_KAPPA=0._q
 +      WINT_EPS=1._q
++      WINT_OHNO_A=0._q
++      WINT_BOUNDARY=WINT_BOUNDARY_BVK
++      WINT_R0=0._q
++      WINT_GATE_D=0._q
++      WINT_Z0=0._q
++      WINT_NORMAL=0._q
 +      WS_TOL=1.0e-8_q
 +      WS_NGRID=0
        
        LRSCOR=.FALSE.
        LHFCALC=CALCULATE_RESPONSE_FUNCTIONS().OR.LDMATRIX()
-@@ -115,6 +123,8 @@
+@@ -115,6 +129,8 @@
        FOCKCORR=1
  
        CALL OPEN_INCAR_IF_FOUND(IU5, LOPEN)
@@ -608,7 +615,7 @@ diff --git a/src/fock.F b/src/fock.F
  ! HF calculations
        CALL PROCESS_INCAR(LOPEN, IU0, IU5, 'LHFCALC', LHFCALC, IERR, WRITEXMLINCAR, FOUNDNUMBER=N)
        IF (LHFCALC .AND. IERR==0 .AND. N>=1) THEN
-@@ -577,6 +587,14 @@
+@@ -577,6 +593,14 @@
  
        CALL PROCESS_INCAR(LOPEN, IU0, IU5, 'EVENONLY', EVENONLY, IERR, WRITEXMLINCAR)
  
@@ -623,7 +630,7 @@ diff --git a/src/fock.F b/src/fock.F
        IF (LHFCALC) THEN
  !
  ! read lowest band to be included in HF term
-@@ -690,6 +708,29 @@
+@@ -690,6 +714,29 @@
  ! truncate the potential kernel at a finite radius R
  !
           CALL PROCESS_INCAR(LOPEN, IU0, IU5, 'HFRCUT', HFRCUT, IERR, WRITEXMLINCAR)
@@ -653,7 +660,7 @@ diff --git a/src/fock.F b/src/fock.F
  !
  ! read in AEXX amount of exact exchange and AGGAX and/or MGGAX (default 1-AEXX)
  !
-@@ -911,6 +952,187 @@
+@@ -911,6 +958,205 @@
  GPOMP !$OMP TARGET UPDATE TO(CMBJ_TYP,LMETA_SC_CMBJ)
  
      END SUBROUTINE XC_FOCK_READER
@@ -669,7 +676,8 @@ diff --git a/src/fock.F b/src/fock.F
 +      IMPLICIT NONE
 +      LOGICAL, INTENT(IN) :: LOPEN
 +      INTEGER, INTENT(IN) :: IU0,IU5
-+      LOGICAL :: HAS_KERNEL,HAS_KAPPA,HAS_EPS,HAS_BOUNDARY,HAS_R0,HAS_GATE,HAS_Z0,HAS_NORMAL
++      LOGICAL :: HAS_KERNEL,HAS_KAPPA,HAS_EPS,HAS_BOUNDARY,HAS_R0,HAS_GATE,HAS_Z0,HAS_NORMAL,HAS_OHNO
++      LOGICAL :: IS_GATE
 +      INTEGER :: IERR,N
 +      REAL(q) :: REQUESTED_CUTOFF,NSCALE
 +      CHARACTER(64) :: NAME,BOUNDARY_NAME
@@ -690,6 +698,8 @@ diff --git a/src/fock.F b/src/fock.F
 +            CALL vtutor%error('WINT_R0 requires one finite nonnegative length in Angstrom')
 +         IF (INDEX(PARSE_ERRORS,'TAG WINT_GATE_D IS NOT ASSIGNED.')>0) &
 +            CALL vtutor%error('WINT_GATE_D requires one finite positive length in Angstrom')
++         IF (INDEX(PARSE_ERRORS,'TAG WINT_OHNO_A IS NOT ASSIGNED.')>0) &
++            CALL vtutor%error('WINT_OHNO_A requires one finite nonnegative length in Angstrom')
 +         IF (INDEX(PARSE_ERRORS,'TAG WINT_Z0 IS NOT ASSIGNED.')>0) &
 +            CALL vtutor%error('WINT_Z0 requires one finite coordinate in Angstrom')
 +         IF (INDEX(PARSE_ERRORS,'TAG WINT_NORMAL IS NOT ASSIGNED.')>0) &
@@ -701,11 +711,13 @@ diff --git a/src/fock.F b/src/fock.F
 +      HAS_BOUNDARY=WINT_TAG_PRESENT('WINT_BOUNDARY')
 +      HAS_R0=WINT_TAG_PRESENT('WINT_R0')
 +      HAS_GATE=WINT_TAG_PRESENT('WINT_GATE_D')
++      HAS_OHNO=WINT_TAG_PRESENT('WINT_OHNO_A')
 +      HAS_Z0=WINT_TAG_PRESENT('WINT_Z0')
 +      HAS_NORMAL=WINT_TAG_PRESENT('WINT_NORMAL')
-+      IF (.NOT.(HAS_KERNEL.OR.HAS_KAPPA.OR.HAS_EPS.OR.HAS_BOUNDARY.OR.HAS_R0.OR.HAS_GATE.OR.HAS_Z0.OR.HAS_NORMAL)) RETURN
++      IF (.NOT.(HAS_KERNEL.OR.HAS_KAPPA.OR.HAS_EPS.OR.HAS_BOUNDARY.OR.HAS_R0.OR.HAS_GATE.OR. &
++                HAS_Z0.OR.HAS_NORMAL.OR.HAS_OHNO)) RETURN
 +      WINT_ENABLED=.TRUE.
-+      IF (.NOT.HAS_KERNEL.AND.(HAS_BOUNDARY.OR.HAS_R0.OR.HAS_GATE.OR.HAS_Z0.OR.HAS_NORMAL)) &
++      IF (.NOT.HAS_KERNEL.AND.(HAS_BOUNDARY.OR.HAS_R0.OR.HAS_GATE.OR.HAS_Z0.OR.HAS_NORMAL.OR.HAS_OHNO)) &
 +         CALL vtutor%error('Layered interaction parameters require explicit WINT_KERNEL')
 +      NAME='BARE'
 +      IF (HAS_KERNEL) THEN
@@ -725,8 +737,11 @@ diff --git a/src/fock.F b/src/fock.F
 +         WINT_MODEL=WINT_MODEL_RK2D
 +      CASE('DUAL_GATE')
 +         WINT_MODEL=WINT_MODEL_DUAL_GATE
++      CASE('DUAL_GATE_RADIAL')
++         WINT_MODEL=WINT_MODEL_DUAL_GATE_RADIAL
 +      CASE DEFAULT
-+         CALL vtutor%error('Unknown WINT_KERNEL: '//TRIM(NAME)//'; supported: BARE, YUKAWA, RK_SHEET, RK2D, DUAL_GATE')
++         CALL vtutor%error('Unknown WINT_KERNEL: '//TRIM(NAME)// &
++            '; supported: BARE, YUKAWA, RK_SHEET, RK2D, DUAL_GATE, DUAL_GATE_RADIAL')
 +      END SELECT
 +      BOUNDARY_NAME='BVK_WS'
 +      IF (HAS_BOUNDARY) THEN
@@ -771,6 +786,13 @@ diff --git a/src/fock.F b/src/fock.F
 +         IF (.NOT.IEEE_IS_FINITE(WINT_GATE_D).OR.WINT_GATE_D<=0._q) &
 +            CALL vtutor%error('WINT_GATE_D must be finite and > 0 Angstrom')
 +      ENDIF
++      IF (HAS_OHNO) THEN
++         CALL PROCESS_INCAR(LOPEN,IU0,IU5,'WINT_OHNO_A',WINT_OHNO_A,IERR,WRITEXMLINCAR, &
++                            LCONTINUE=.TRUE.,FOUNDNUMBER=N)
++         IF (IERR/=0.OR.N/=1) CALL vtutor%error('WINT_OHNO_A requires one finite nonnegative length in Angstrom')
++         IF (.NOT.IEEE_IS_FINITE(WINT_OHNO_A).OR.WINT_OHNO_A<0._q) &
++            CALL vtutor%error('WINT_OHNO_A must be finite and >= 0 Angstrom')
++      ENDIF
 +      IF (HAS_Z0) THEN
 +         CALL PROCESS_INCAR(LOPEN,IU0,IU5,'WINT_Z0',WINT_Z0,IERR,WRITEXMLINCAR, &
 +                            LCONTINUE=.TRUE.,FOUNDNUMBER=N)
@@ -798,10 +820,13 @@ diff --git a/src/fock.F b/src/fock.F
 +         CALL vtutor%error('WINT_R0 is only valid for RK_SHEET or RK2D')
 +      IF ((WINT_MODEL==WINT_MODEL_RK_SHEET.OR.WINT_MODEL==WINT_MODEL_RK2D).AND..NOT.HAS_R0) &
 +         CALL vtutor%error('WINT_KERNEL='//TRIM(NAME)//' requires explicit WINT_R0 in Angstrom')
-+      IF (HAS_GATE.AND.WINT_MODEL/=WINT_MODEL_DUAL_GATE) &
-+         CALL vtutor%error('WINT_GATE_D is only valid for WINT_KERNEL=DUAL_GATE')
-+      IF (WINT_MODEL==WINT_MODEL_DUAL_GATE.AND..NOT.HAS_GATE) &
-+         CALL vtutor%error('WINT_KERNEL=DUAL_GATE requires explicit WINT_GATE_D in Angstrom')
++      IS_GATE=WINT_MODEL==WINT_MODEL_DUAL_GATE.OR.WINT_MODEL==WINT_MODEL_DUAL_GATE_RADIAL
++      IF (HAS_GATE.AND..NOT.IS_GATE) &
++         CALL vtutor%error('WINT_GATE_D is only valid for DUAL_GATE or DUAL_GATE_RADIAL')
++      IF (IS_GATE.AND..NOT.HAS_GATE) &
++         CALL vtutor%error('WINT_KERNEL='//TRIM(NAME)//' requires explicit WINT_GATE_D in Angstrom')
++      IF (HAS_OHNO.AND.WINT_MODEL/=WINT_MODEL_DUAL_GATE_RADIAL) &
++         CALL vtutor%error('WINT_OHNO_A is only valid for WINT_KERNEL=DUAL_GATE_RADIAL')
 +      IF (WINT_MODEL>=WINT_MODEL_RK_SHEET.AND.WINT_BOUNDARY/=WINT_BOUNDARY_SLAB) &
 +         CALL vtutor%error('WINT_KERNEL='//TRIM(NAME)//' requires WINT_BOUNDARY=SLAB_WS')
 +      IF (WINT_BOUNDARY/=WINT_BOUNDARY_SLAB) THEN
@@ -841,7 +866,7 @@ diff --git a/src/fock.F b/src/fock.F
  
  
  !**********************************************************************
-@@ -1994,6 +2216,238 @@
+@@ -1994,6 +2240,244 @@
  ! 
  !**********************************************************************
  
@@ -868,6 +893,7 @@ diff --git a/src/fock.F b/src/fock.F
 +      REAL(q), SAVE :: REPORTED_KAPPA=-1, REPORTED_EPS=-1
 +      INTEGER, SAVE :: REPORTED_BOUNDARY=-1
 +      REAL(q), SAVE :: REPORTED_R0=-1, REPORTED_GATE=-1, REPORTED_Z0=HUGE(1._q), REPORTED_NORMAL(3)=0._q
++      REAL(q), SAVE :: REPORTED_OHNO=-1._q
 +
 +      IF (WINT_CUTOFF_MODE/=WINT_CUTOFF_WS) &
 +         CALL vtutor%error('WS kernel requested without HFRCUT=-2')
@@ -886,7 +912,7 @@ diff --git a/src/fock.F b/src/fock.F
 +      ENDDO
 +      IF (WINT_BOUNDARY==WINT_BOUNDARY_SLAB) THEN
 +         CALL wlayer_init(LATT_CUR%A,NK,WINT_MODEL,WINT_KAPPA,WINT_EPS,WINT_R0,WINT_GATE_D, &
-+                          WINT_Z0,WINT_NORMAL,WS_TOL,WS_NGRID,IERR,MSG)
++                          WINT_Z0,WINT_NORMAL,WS_TOL,WS_NGRID,IERR,MSG,OHNO_A=WINT_OHNO_A)
 +         IF (IERR/=0) CALL vtutor%error('Layered interaction construction failed: '//TRIM(MSG))
 +         CALL wlayer_info(NG2,RIN,ALPHA,LZ,BYTES,NTLOW,NTHIGH,MAXMODE,QUADERR)
 +         WINT_LAYER_LZ=LZ
@@ -899,7 +925,7 @@ diff --git a/src/fock.F b/src/fock.F
 +            IF (.NOT.REPORTED.OR.ANY(A/=REPORTED_A).OR.WS_TOL/=REPORTED_TOL.OR.ANY(WS_NGRID/=REPORTED_GRID).OR. &
 +                WINT_MODEL/=REPORTED_MODEL.OR.WINT_KAPPA/=REPORTED_KAPPA.OR.WINT_EPS/=REPORTED_EPS.OR. &
 +                WINT_BOUNDARY/=REPORTED_BOUNDARY.OR.WINT_R0/=REPORTED_R0.OR.WINT_GATE_D/=REPORTED_GATE.OR. &
-+                WINT_Z0/=REPORTED_Z0.OR.ANY(WINT_NORMAL/=REPORTED_NORMAL)) THEN
++                WINT_Z0/=REPORTED_Z0.OR.ANY(WINT_NORMAL/=REPORTED_NORMAL).OR.WINT_OHNO_A/=REPORTED_OHNO) THEN
 +               WRITE(IU6,'(A)') ' WANNIER_INTERACTION_WS: HFRCUT=-2, in-plane BvK WS and open normal cell'
 +               WRITE(IU6,'(A)') ' WINT_BOUNDARY: SLAB_WS'
 +               SELECT CASE(WINT_MODEL)
@@ -914,8 +940,12 @@ diff --git a/src/fock.F b/src/fock.F
 +                  WRITE(IU6,'(A)') ' WINT_KERNEL: RK2D'
 +               CASE(WINT_MODEL_DUAL_GATE)
 +                  WRITE(IU6,'(A)') ' WINT_KERNEL: DUAL_GATE'
-+                  WRITE(IU6,'(A,ES16.8)') ' WINT_GATE_D [Angstrom, midplane to each plate]: ',WINT_GATE_D
++               CASE(WINT_MODEL_DUAL_GATE_RADIAL)
++                  WRITE(IU6,'(A)') ' WINT_KERNEL: DUAL_GATE_RADIAL'
++                  WRITE(IU6,'(A,ES16.8)') ' WINT_OHNO_A [Angstrom]: ',WINT_OHNO_A
 +               END SELECT
++               IF (WINT_MODEL==WINT_MODEL_DUAL_GATE.OR.WINT_MODEL==WINT_MODEL_DUAL_GATE_RADIAL) &
++                  WRITE(IU6,'(A,ES16.8)') ' WINT_GATE_D [Angstrom, midplane to each plate]: ',WINT_GATE_D
 +               IF (WINT_MODEL==WINT_MODEL_RK_SHEET.OR.WINT_MODEL==WINT_MODEL_RK2D) &
 +                  WRITE(IU6,'(A,ES16.8)') ' WINT_R0 [Angstrom]: ',WINT_R0
 +               IF (WINT_MODEL/=WINT_MODEL_BARE) &
@@ -937,6 +967,7 @@ diff --git a/src/fock.F b/src/fock.F
 +               REPORTED_MODEL=WINT_MODEL;REPORTED_KAPPA=WINT_KAPPA;REPORTED_EPS=WINT_EPS
 +               REPORTED_ENABLED=WINT_ENABLED;REPORTED_BOUNDARY=WINT_BOUNDARY
 +               REPORTED_R0=WINT_R0;REPORTED_GATE=WINT_GATE_D;REPORTED_Z0=WINT_Z0;REPORTED_NORMAL=WINT_NORMAL
++               REPORTED_OHNO=WINT_OHNO_A
 +            ENDIF
 +         ENDIF
 +         RETURN
@@ -1080,7 +1111,7 @@ diff --git a/src/fock.F b/src/fock.F
      SUBROUTINE SET_GFAC_WAVEFUN(WDES1, LATT_CUR, FSG, POTFAK, ENCUT, ENCUTSOFT)
        USE constant
        USE wave
-@@ -2453,6 +2907,7 @@
+@@ -2453,6 +2937,7 @@
        INTEGER NK
  
        FSG_STORE=0
@@ -1102,7 +1133,7 @@ diff --git a/src/dmft.F b/src/dmft.F
    USE chi_base
    USE wpot
    USE lattice
-@@ -57,7 +61,174 @@
+@@ -57,7 +61,181 @@
    !print all matrix elements calculated
    REAL(q),PRIVATE, SAVE :: VCUTOFF !high cutoff of V
  
@@ -1136,8 +1167,12 @@ diff --git a/src/dmft.F b/src/dmft.F
 +          WRITE(IUNIT,'(A)') '# Interaction kernel: RK2D'
 +       CASE(WINT_MODEL_DUAL_GATE)
 +          WRITE(IUNIT,'(A)') '# Interaction kernel: DUAL_GATE'
-+          WRITE(IUNIT,'(A,ES24.16)') '# WINT_GATE_D [Angstrom, midplane to each plate]: ',WINT_GATE_D
++       CASE(WINT_MODEL_DUAL_GATE_RADIAL)
++          WRITE(IUNIT,'(A)') '# Interaction kernel: DUAL_GATE_RADIAL'
++          WRITE(IUNIT,'(A,ES24.16)') '# WINT_OHNO_A [Angstrom]: ',WINT_OHNO_A
 +       END SELECT
++       IF (WINT_MODEL==WINT_MODEL_DUAL_GATE.OR.WINT_MODEL==WINT_MODEL_DUAL_GATE_RADIAL) &
++          WRITE(IUNIT,'(A,ES24.16)') '# WINT_GATE_D [Angstrom, midplane to each plate]: ',WINT_GATE_D
 +       IF (WINT_MODEL==WINT_MODEL_RK_SHEET.OR.WINT_MODEL==WINT_MODEL_RK2D) &
 +          WRITE(IUNIT,'(A,ES24.16)') '# WINT_R0 [Angstrom]: ',WINT_R0
 +       IF (WINT_MODEL/=WINT_MODEL_BARE) &
@@ -1203,7 +1238,7 @@ diff --git a/src/dmft.F b/src/dmft.F
 +    COMPLEX(q), INTENT(INOUT) :: WORK(:,:)
 +    GDEF, INTENT(IN) :: MATRIX(:,:,:,:)
 +    CHARACTER(1024) :: DIRECTORY,FILENAME,MESSAGE
-+    INTEGER :: STATUS,IUNIT,IOS,IERR,LAYOUT(9),NG
++    INTEGER :: STATUS,IUNIT,IOS,IERR,LAYOUT(9),NG,AUDIT_FORMAT
 +#ifdef gammareal
 +    RETURN
 +#else
@@ -1218,8 +1253,11 @@ diff --git a/src/dmft.F b/src/dmft.F
 +    WRITE(FILENAME,'(A,A,I5.5,A,I5.5,A)') TRIM(DIRECTORY),'/q',NQ,'-rank',WDES%COMM%NODE_ME,'.bin'
 +    OPEN(NEWUNIT=IUNIT,FILE=TRIM(FILENAME),ACCESS='STREAM',FORM='UNFORMATTED',STATUS='REPLACE',IOSTAT=IOS)
 +    IF (IOS/=0) CALL vtutor%error('Could not open explicitly requested layered q-block diagnostic')
-+    WRITE(IUNIT) INT([3,NG,NW,NQ,WDES%NKPTS,GRIDHF%NPLWV,WQ%GRID%NPLWV,LAYOUT,WINT_BOUNDARY],int32)
++    ! The radial model adds its Ohno length after the common scalar header.
++    AUDIT_FORMAT=MERGE(4,3,WINT_MODEL==WINT_MODEL_DUAL_GATE_RADIAL)
++    WRITE(IUNIT) INT([AUDIT_FORMAT,NG,NW,NQ,WDES%NKPTS,GRIDHF%NPLWV,WQ%GRID%NPLWV,LAYOUT,WINT_BOUNDARY],int32)
 +    WRITE(IUNIT) WQ%VKPT,SCALE,WINT_KAPPA,WINT_EPS,WINT_R0,WINT_GATE_D,WINT_Z0,WINT_LAYER_LZ
++    IF (WINT_MODEL==WINT_MODEL_DUAL_GATE_RADIAL) WRITE(IUNIT) WINT_OHNO_A
 +    WRITE(IUNIT) INT(WQ%IGX(1:NG),int32),INT(WQ%IGY(1:NG),int32),INT(WQ%IGZ(1:NG),int32)
 +    WRITE(IUNIT) DENSITY,MATRIX
 +    CALL WINT_LAYER_APPLY_NATIVE(WQ,LATT_CUR,DENSITY,WORK,IERR,MESSAGE,AUDIT_UNIT=IUNIT)
@@ -1278,7 +1316,7 @@ diff --git a/src/dmft.F b/src/dmft.F
  !*********************************************************************
  ! 
  !> High level scheduler:
-@@ -195,6 +366,7 @@
+@@ -195,6 +373,7 @@
       !using Gaunt coeffiecients and Slater integrals
       LMAX_FOCKAE_STORE=LMAX_FOCKAE
       IF (MIMIC_US) THEN
@@ -1286,7 +1324,7 @@ diff --git a/src/dmft.F b/src/dmft.F
         LMAXMP2=-1
       ELSE
         LMAXMP2=4
-@@ -416,6 +588,7 @@
+@@ -416,6 +595,7 @@
       USE mlwf
       USE locproj
       USE crpa, ONLY : CRPA_NUM_WAN
@@ -1294,7 +1332,7 @@ diff --git a/src/dmft.F b/src/dmft.F
  
       IMPLICIT NONE
       TYPE(wavedes) WDES
-@@ -446,6 +619,9 @@
+@@ -446,6 +626,9 @@
       INTEGER NKPTS_IRZ
       INTEGER LMAX_FOCKAE_STORE
       REAL(q) :: EFERMI(WDES%ISPIN)
@@ -1304,7 +1342,7 @@ diff --git a/src/dmft.F b/src/dmft.F
  
       GDEF, ALLOCATABLE :: CRIJKL(:,:,:,:)   !multi-centre Coulomb integrals
       PROFILING_START( 'dmft_matrix_elements')
-@@ -468,6 +644,28 @@
+@@ -468,6 +651,28 @@
          W%EFERMI = EFERMI
       ENDIF
   
@@ -1333,7 +1371,7 @@ diff --git a/src/dmft.F b/src/dmft.F
       !we need the projection matrices U_matrix and U_matrix_opt in the following
       !so if they are not stored, determine them now
       IF ( CRPA_NUM_WAN < 1) THEN
-@@ -513,6 +711,7 @@
+@@ -513,6 +718,7 @@
       !using Gaunt coeffiecients and Slater integrals
       LMAX_FOCKAE_STORE=LMAX_FOCKAE
       IF (MIMIC_US) THEN
@@ -1341,7 +1379,7 @@ diff --git a/src/dmft.F b/src/dmft.F
         LMAXMP2=-1
       ELSE
         LMAXMP2=4
-@@ -594,6 +793,14 @@
+@@ -594,6 +800,14 @@
          ENDIF
  #endif
          ENDIF
@@ -1356,7 +1394,7 @@ diff --git a/src/dmft.F b/src/dmft.F
  
       !reduce cutoff and compute V using LMAXFOCKE = 4 and LMAXMP2 = -1
       LMAXMP2=-1
-@@ -935,6 +1142,7 @@
+@@ -935,6 +1149,7 @@
               OPEN(NEWUNIT=IUNIT,FILE=FILENAME//TRIM(ADJUSTL(EXTENSION)),STATUS='REPLACE')
                !
               ! write out positions of Ri
@@ -1364,7 +1402,7 @@ diff --git a/src/dmft.F b/src/dmft.F
               WRITE( IUNIT ,'(A)')'# File generated by VASP contains Coulomb matrix elements'
               IF( FILENAME(1:1) == 'V' )THEN
                   WRITE( IUNIT ,'(A)')'# V_ijkl = [ij,R|kl,0] '
-@@ -1119,6 +1327,7 @@
+@@ -1119,6 +1334,7 @@
         WDES,W,KPOINTS,LATT_CUR,T_INFO,P,WGW,NB_START,NB_STOP,COMEGA,LMAX,IO,WIJKL,PIJKL)
  
      USE base
@@ -1372,7 +1410,7 @@ diff --git a/src/dmft.F b/src/dmft.F
      USE pseudo
      USE mpimy
      USE mkpoints
-@@ -1175,11 +1384,20 @@
+@@ -1175,11 +1391,20 @@
      GDEF      , ALLOCATABLE :: CRHO14(:,:)    ! one center charge
      GDEF      , ALLOCATABLE :: CRHO23(:,:)    ! one center charge
      GDEF, ALLOCATABLE :: CHAM(:,:,:,:)    ! hamilton matrix
@@ -1394,7 +1432,7 @@ diff --git a/src/dmft.F b/src/dmft.F
      CHARACTER (LEN=16) :: FILENAME_NODE
      ! one-center terms
      TYPE (one_center_handle), POINTER :: H => NULL()
-@@ -1192,11 +1410,20 @@
+@@ -1192,11 +1417,20 @@
      INTEGER :: NQ_
      ! two electron four orbital integrals in a Wannier basis
      PROFILING_START( 'calculate_wijkl_twocentre' )
@@ -1416,7 +1454,7 @@ diff --git a/src/dmft.F b/src/dmft.F
         CALL SET_UP_ONE_CENTER_H(WDES, P, T_INFO, LMAX, H)
      ENDIF
  
-@@ -1296,13 +1523,48 @@
+@@ -1296,13 +1530,48 @@
         IF (NQ>=0) THEN
            CALL SETWDES(WGW, WGWQ, NQ)
            NP =WGWQ%NGVECTOR
@@ -1465,7 +1503,7 @@ diff --git a/src/dmft.F b/src/dmft.F
            IF (ASSOCIATED(H).AND..NOT.ASSOCIATED(WPOTH)) THEN
               ALLOCATE(CRHO14(H%TOTAL_ENTRIES, NGLB* NGLB ), CRHO23(H%TOTAL_ENTRIES, NGLB* NGLB )) 
            ELSE
-@@ -1363,10 +1625,18 @@
+@@ -1363,10 +1632,18 @@
  !==========================================================================
            IF (NQ>=0) THEN
               CALL SETWDES(WHF%WDES,WDESK4,K4)
@@ -1484,7 +1522,7 @@ diff --git a/src/dmft.F b/src/dmft.F
                      
               !=============================================================
               ! calculation of PIJKL
-@@ -1379,6 +1649,10 @@
+@@ -1379,6 +1656,10 @@
         ENDDO !  k1
  
         IF (NQ>=0) THEN
@@ -1495,7 +1533,7 @@ diff --git a/src/dmft.F b/src/dmft.F
            DO N=1,NGLB*NGLB
               GCHG14(1:NP,N)=GCHG14(1:NP,N)*SQRT((1.0_q/GRIDHF%NPLWV))
            ENDDO
-@@ -1400,6 +1674,9 @@
+@@ -1400,6 +1681,9 @@
                       WPOTH%WPOT(NQ)%RESPONSEFUN(1,1,1), SIZE(WPOTH%WPOT(NQ)%RESPONSEFUN,1), GCHG14(1,1), SIZE(GCHG14,1), &
                       (0.0_q,0.0_q), GCHG23(1,1), SIZE(GCHG23,1) )
               ENDIF
@@ -1505,7 +1543,7 @@ diff --git a/src/dmft.F b/src/dmft.F
            ELSE
               CALL ZCOPY( SIZE(GCHG14,1)*NGLB*NGLB,  GCHG14(1,1), 1, GCHG23(1,1), 1)
               ! multiply with potential factor
-@@ -1425,6 +1702,14 @@
+@@ -1425,6 +1709,14 @@
                    CRHO23(1,1), SIZE(CRHO23,1), CRHO14(1,1), SIZE(CRHO14,1), &
                    one , CHAM(1,1,1,1), SIZE(CHAM,1)*SIZE(CHAM,2))
               NFLOAT=NFLOAT+8._q*NGLB*NGLB*NGLB*NGLB*H%TOTAL_ENTRIES
@@ -1520,7 +1558,7 @@ diff --git a/src/dmft.F b/src/dmft.F
            ENDIF
            DO N2=1,NGLB
               DO N3=1,NGLB
-@@ -1440,7 +1725,11 @@
+@@ -1440,7 +1732,11 @@
               DO R1=1,WDES%NKPTS
                  !CPHASE= EXP(CITPI* (+SUM(WDES%VKPT(:,K1)*WPOS(:,R1)-SUM(WDES%VKPT(:,K4)*WPOS(:,R1)))))
                  !> this phase factor makes much more sense: k1-k4 = q 
@@ -1532,7 +1570,7 @@ diff --git a/src/dmft.F b/src/dmft.F
                  
                  DO N1=1,NGLB
                     DO N2=1,NGLB
-@@ -1448,7 +1737,12 @@
+@@ -1448,7 +1744,12 @@
                           DO N4=1,NGLB
                              !IDX = (N4-1) * NGLB**3 + (N3-1) * NGLB**2 + (N2-1) * NGLB + N1
                              IDX = (N1-1) * NGLB**3 + (N2-1) * NGLB**2 + (N3-1) * NGLB + N4
@@ -1545,7 +1583,7 @@ diff --git a/src/dmft.F b/src/dmft.F
                           ENDDO
                        ENDDO
                     ENDDO
-@@ -1565,9 +1859,37 @@
+@@ -1565,9 +1866,37 @@
      ENDDO ! spin
  
      IF (NQ>=0) THEN
@@ -1583,7 +1621,7 @@ diff --git a/src/dmft.F b/src/dmft.F
  !==========================================================================
      CALL STOP_TIMING("WIJKL+",IO%IU6,XMLTAG='total')
  
-@@ -2714,7 +3036,7 @@
+@@ -2714,7 +3043,7 @@
  
    SUBROUTINE ONEELECTRON_CHARGE( WHF, H, LATT_CUR, WGW, &
         W1, K1, W4, K4, NB_START, NGLB, NFFT, &
@@ -1592,7 +1630,7 @@ diff --git a/src/dmft.F b/src/dmft.F
  
      USE wave_high
      USE constant
-@@ -2742,7 +3064,8 @@
+@@ -2742,7 +3071,8 @@
      COMPLEX(q) :: GWORK( MAX(GRIDHF%MPLWV,WGW%GRID%MPLWV))
      COMPLEX(q) :: CPHASE(GRIDHF%MPLWV)
      GDEF, ALLOCATABLE :: CRHOLM(:), CRHO_TMP(:,:) ! augmentation occupancy matrix
@@ -1602,7 +1640,7 @@ diff --git a/src/dmft.F b/src/dmft.F
  
      ! set the descriptor for wavefunctions at the point k1-k4
      ! the product w*_k4,n4(r) w_k1,n1(r) corresponds to a wavevector q
-@@ -2758,7 +3081,9 @@
+@@ -2758,7 +3088,9 @@
            str(K1) // " " // str(K4) // " " // str(NP) // " " // str(SIZE(GCHG14,1)), __FILE__, __LINE__)
      ENDIF
  
@@ -1613,7 +1651,7 @@ diff --git a/src/dmft.F b/src/dmft.F
      IF (ASSOCIATED(H).AND..NOT.ASSOCIATED(WPOTH)) THEN
         ALLOCATE(CRHO_TMP(H%TOTAL_ENTRIES,1))
      ENDIF
-@@ -2773,7 +3098,7 @@
+@@ -2773,7 +3105,7 @@
      ! to cure the problem
      CALL SETPHASE(WHF%WDES%VKPT(:,K1)-WHF%WDES%VKPT(:,K4)-WHF%WDES%VKPT(:,NQ), GRIDHF,CPHASE,LPHASE)
      ! set phase factor in fast_aug
@@ -1622,7 +1660,7 @@ diff --git a/src/dmft.F b/src/dmft.F
   
      DO N4=1,NGLB
         NB4_INTO_TOT=N4+NB_START-1
-@@ -2781,7 +3106,13 @@
+@@ -2781,7 +3113,13 @@
         DO N1=1,NGLB
            NB1_INTO_TOT=N1+NB_START-1
            
@@ -1637,7 +1675,7 @@ diff --git a/src/dmft.F b/src/dmft.F
               CALL FOCK_CHARGE_ONE_CENTER_NOINT( W1(N1), W4(N4), GWORK(1), &
                    H, CRHO_TMP, CRHOLM,  SIZE(CRHOLM))
               IF (LPHASE) THEN
-@@ -2802,7 +3133,7 @@
+@@ -2802,7 +3140,7 @@
      ENDDO
      
      ! deallocation
@@ -1646,7 +1684,7 @@ diff --git a/src/dmft.F b/src/dmft.F
      IF (ASSOCIATED(H).AND..NOT.ASSOCIATED(WPOTH)) THEN
         DEALLOCATE(CRHO_TMP)
      ENDIF
-@@ -3356,6 +3687,16 @@
+@@ -3356,6 +3694,16 @@
          ENDDO
       ENDIF 
  
@@ -1663,7 +1701,7 @@ diff --git a/src/dmft.F b/src/dmft.F
       NWLOW=-1
       CALL PROCESS_INCAR(.FALSE., IO%IU0, IO%IU5, 'NWLOW', NWLOW, IERR, WRITEXMLINCAR)
  
-@@ -3548,8 +3889,13 @@
+@@ -3548,8 +3896,13 @@
                  ELSE
                     OPEN(UNIT=99,FILE='VIJKL.'//EXTENSION,STATUS='REPLACE')
                  ENDIF
@@ -1677,7 +1715,7 @@ diff --git a/src/dmft.F b/src/dmft.F
                  WRITE( 99 ,'(A,F20.12)')'#  I   J   K   L          RE(V_IJKL)          IM(V_IJKL)'
                  !print all matrix elements into VIJKL
                  DO N4=1,NWTOT
-@@ -3567,7 +3913,9 @@
+@@ -3567,7 +3920,9 @@
                  WRITE(IO%IU6,*)
                  WRITE(IO%IU6,'(" spin components:",2I3)') ISP1,ISP2
                  ! Write WIJKL(I,I,J,J) to OUTCAR
@@ -1688,7 +1726,7 @@ diff --git a/src/dmft.F b/src/dmft.F
                     WRITE(IO%IU6,'(/A)') ' bare Coulomb repulsion V_iijj:'
                  ELSE IF ( LUSELOCPROJ ) THEN
                     WRITE(IO%IU6,'(/A)') ' bare Coulomb repulsion V_iijj between LOCPROJs:'
-@@ -3587,7 +3935,9 @@
+@@ -3587,7 +3942,9 @@
                     WRITE(IO%IU6,*)
                  ENDDO 
                  ! Write WIJKL(I,J,J,I) to OUTCAR
@@ -1699,7 +1737,7 @@ diff --git a/src/dmft.F b/src/dmft.F
                     WRITE(IO%IU6,'(/A)') ' bare Coulomb repulsion V_ijji:'
                  ELSE IF ( LUSELOCPROJ ) THEN
                     WRITE(IO%IU6,'(/A)') ' bare Coulomb repulsion V_ijji between LOCPROJs:'
-@@ -3607,7 +3957,9 @@
+@@ -3607,7 +3964,9 @@
                     WRITE(IO%IU6,*)
                  ENDDO 
                  ! Write WIJKL(I,J,I,J) to OUTCAR
@@ -1710,7 +1748,7 @@ diff --git a/src/dmft.F b/src/dmft.F
                     WRITE(IO%IU6,'(/A)') ' bare Coulomb repulsion V_ijij:'
                  ELSE IF ( LUSELOCPROJ ) THEN
                     WRITE(IO%IU6,'(/A)') ' bare Coulomb repulsion V_ijij between LOCPROJs:'
-@@ -3628,7 +3980,11 @@
+@@ -3628,7 +3987,11 @@
                  ENDDO 
  
                  ! Write Hubbard Kanamori parameter
@@ -1722,7 +1760,7 @@ diff --git a/src/dmft.F b/src/dmft.F
                  CTMP1 = 0
                  CTMP2 = 0
                  CTMP3 = 0
-@@ -3645,11 +4001,27 @@
+@@ -3645,11 +4008,27 @@
                  IF ( NWTOTSUB > 1 ) THEN
                     CTMP2 = CTMP2/REAL(NWTOTSUB*(NWTOTSUB-1),q)
                     CTMP3 = CTMP3/REAL(NWTOTSUB*(NWTOTSUB-1),q) 
@@ -3474,7 +3512,7 @@ diff --git a/src/wint_layered.F b/src/wint_layered.F
 new file mode 100644
 --- /dev/null
 +++ b/src/wint_layered.F
-@@ -0,0 +1,884 @@
+@@ -0,0 +1,940 @@
 +! Physical layered interactions on fixed Fourier pair densities.
 +MODULE wint_layered
 +  USE iso_fortran_env, ONLY: real64,int64,int32
@@ -3491,7 +3529,7 @@ new file mode 100644
 +  LOGICAL, SAVE :: ready=.false.
 +  INTEGER, SAVE :: model_s=0,mesh_s(3)=0,grid_s(2)=0,override_s(2)=0,mmax_s=-1
 +  REAL(dp), SAVE :: a_s(3,3)=0,normal_s(3)=0,b_s(3,2)=0,zsign_s=1
-+  REAL(dp), SAVE :: kappa_s=0,eps_s=1,r0_s=0,d_s=0,z0_s=0,tol_s=1e-8_dp
++  REAL(dp), SAVE :: kappa_s=0,eps_s=1,r0_s=0,d_s=0,ohno_s=0,z0_s=0,tol_s=1e-8_dp
 +  REAL(dp), SAVE :: rin_s=0,alpha_s=0,lz_s=0,area_s=0,qmax_s=-1,quaderr_s=0
 +  INTEGER(int64), SAVE :: bytes_s=0,peak_s=0,reserve_input_s=0
 +  REAL(dp), ALLOCATABLE, SAVE :: tl(:),wl(:),xh(:),wh(:),plane(:,:,:)
@@ -3516,24 +3554,34 @@ new file mode 100644
 +    maxmode=mmax_s;quad_error=quaderr_s
 +  END SUBROUTINE
 +
-+  SUBROUTINE wlayer_init(aprim,mesh,model,kappa,epsilon_r,r0,gate_d,z0,normal,tol,ngrid,ierr,message)
++  SUBROUTINE wlayer_init(aprim,mesh,model,kappa,epsilon_r,r0,gate_d,z0,normal,tol,ngrid,ierr,message,ohno_a)
 +    REAL(dp), INTENT(IN) :: aprim(3,3),kappa,epsilon_r,r0,gate_d,z0,normal(3),tol
++    REAL(dp), OPTIONAL, INTENT(IN) :: ohno_a
 +    INTEGER, INTENT(IN) :: mesh(3),model,ngrid(3)
 +    INTEGER, INTENT(OUT) :: ierr
 +    CHARACTER(*), INTENT(OUT) :: message
 +    REAL(dp) :: n(3),c(3),a1(3),a2(3),br1(3),br2(3),vec(3),rr,nn,det,first,bandwidth,ab1(3),ab2(3)
++    REAL(dp) :: soft_length
 +    REAL(dp), ALLOCATABLE :: dist(:,:)
 +    COMPLEX(dp), ALLOCATABLE :: work(:,:)
 +    INTEGER :: ng(2),i,j,k,stat
 +    INTEGER(int64) :: need
 +    ierr=0;message=''
++    soft_length=0
++    IF (PRESENT(ohno_a)) soft_length=ohno_a
 +    IF (.NOT.ALL(ieee_is_finite(aprim)).OR..NOT.ALL(ieee_is_finite(normal)).OR. &
-+        .NOT.ALL(ieee_is_finite([kappa,epsilon_r,r0,gate_d,z0,tol]))) THEN
++        .NOT.ALL(ieee_is_finite([kappa,epsilon_r,r0,gate_d,soft_length,z0,tol]))) THEN
 +      ierr=1;message='Layered kernel parameters and lattice must be finite';RETURN
 +    ENDIF
-+    IF (model<0.OR.model>4.OR.ANY(mesh<1).OR.mesh(3)/=1.OR.kappa<0.OR.r0<0.OR.epsilon_r<=0.OR. &
++    IF (model<0.OR.model>5.OR.ANY(mesh<1).OR.mesh(3)/=1.OR.kappa<0.OR.r0<0.OR.epsilon_r<=0.OR. &
 +        tol<=0.OR.tol>1e-2_dp) THEN
 +      ierr=1;message='Invalid layered model, mesh, screening, permittivity or tolerance';RETURN
++    ENDIF
++    IF (soft_length<0.OR.(model/=5.AND.soft_length/=0)) THEN
++      ierr=1;message='A nonnegative Ohno length is supported only for DUAL_GATE_RADIAL';RETURN
++    ENDIF
++    IF (model==5.AND.gate_d<=0) THEN
++      ierr=1;message='DUAL_GATE_RADIAL requires positive midpoint-to-gate distance';RETURN
 +    ENDIF
 +    c=aprim(:,3);nn=NORM2(c)
 +    IF (nn<=0) THEN
@@ -3564,12 +3612,13 @@ new file mode 100644
 +    ENDIF
 +    IF (ready) THEN
 +      IF (ALL(a_s==aprim).AND.ALL(mesh_s==mesh).AND.model_s==model.AND.kappa_s==kappa.AND. &
-+          eps_s==epsilon_r.AND.r0_s==r0.AND.d_s==gate_d.AND.z0_s==z0.AND.tol_s==tol.AND. &
++          eps_s==epsilon_r.AND.r0_s==r0.AND.d_s==gate_d.AND.ohno_s==soft_length.AND. &
++          z0_s==z0.AND.tol_s==tol.AND. &
 +          ALL(override_s==ngrid(1:2)).AND.ALL(normal_s==n)) RETURN
 +    ENDIF
 +    CALL wlayer_reset()
 +    a_s=aprim;mesh_s=mesh;model_s=model;kappa_s=kappa;eps_s=epsilon_r;r0_s=r0;d_s=gate_d
-+    z0_s=z0;tol_s=tol;grid_s=ng;override_s=ngrid(1:2);normal_s=n;lz_s=nn
++    ohno_s=soft_length;z0_s=z0;tol_s=tol;grid_s=ng;override_s=ngrid(1:2);normal_s=n;lz_s=nn
 +    zsign_s=SIGN(1._dp,DOT_PRODUCT(n,c))
 +    a1=aprim(:,1)*REAL(mesh(1),dp);a2=aprim(:,2)*REAL(mesh(2),dp)
 +    area_s=SQRT(SUM(cross(a1,a2)**2))
@@ -3622,6 +3671,7 @@ new file mode 100644
 +    first=MIN(alpha_s,1/lz_s)
 +    IF (r0_s>1/first) first=1/r0_s
 +    IF (model_s==4) first=MIN(first,1/d_s)
++    IF (model_s==5.AND.MAX(d_s,ohno_s)>1/first) first=1/MAX(d_s,ohno_s)
 +    CALL panels(first,alpha_s,tl,wl,ierr)
 +    IF (ierr/=0) THEN
 +      message='Layered low-t quadrature exceeds supported workspace';RETURN
@@ -3711,6 +3761,10 @@ new file mode 100644
 +    first=1/scale;last=1/alpha_s
 +    IF (r0_s>0) first=MIN(first,r0_s)
 +    IF (model_s==4) first=MIN(first,2*d_s-lz_s)
++    IF (model_s==5) THEN
++      first=MIN(first,d_s)
++      IF (ohno_s>0) first=MIN(first,ohno_s)
++    ENDIF
 +    CALL panels(first,last,xh,wh,ierr)
 +    IF (ierr/=0) THEN
 +      message='Layered high-t quadrature is outside supported range';RETURN
@@ -3759,6 +3813,10 @@ new file mode 100644
 +    ierr=0;message='';matrix=0
 +    IF (.NOT.ready.OR.t<=0.OR..NOT.ieee_is_finite(t).OR.mmax<0) THEN
 +      ierr=1;message='Invalid normal projection query';RETURN
++    ENDIF
++    IF (model_s==5) THEN
++      weight=radial_gate_weight(t,d_s,ohno_s)
++      IF (weight==0) RETURN
 +    ENDIF
 +    eta=t*lz_s
 +    IF (.NOT.ieee_is_finite(eta)) THEN
@@ -3824,6 +3882,10 @@ new file mode 100644
 +    CALL gaussian_moments(eta,0._dp,mmax,s,c,ierr)
 +    IF (ierr/=0) GOTO 90
 +    CALL difference_matrix(s,c,mmax,matrix)
++    IF (model_s==5) THEN
++      matrix=matrix*weight
++      RETURN
++    ENDIF
 +    IF (model_s==2.AND.r0_s>0) THEN
 +      CALL sheet_moments(t,mmax,s,c,ss,cc,ierr)
 +      IF (ierr/=0) GOTO 90
@@ -3853,6 +3915,38 @@ new file mode 100644
 +    RETURN
 +90  message='Normal Galerkin quadrature did not converge'
 +  END SUBROUTINE
++
++  ! Gaussian representation of the midpoint image sum evaluated at the
++  ! three-dimensional separation: theta_4(0,exp[-(2*d*t)^2])*exp[-(a*t)^2].
++  ! The Poisson-transformed odd modes avoid alternating cancellation at small d*t.
++  PURE REAL(dp) FUNCTION radial_gate_weight(t,d,a) RESULT(w)
++    REAL(dp), INTENT(IN) :: t,d,a
++    REAL(dp) :: td,ta,arg
++    INTEGER :: n
++    IF (t>=1) THEN
++      td=t*MIN(d,tailcut/t)
++      ta=t*MIN(a,tailcut/t)
++    ELSE
++      td=MIN(t*d,tailcut)
++      ta=MIN(t*a,tailcut)
++    ENDIF
++    w=0
++    IF (ta>=tailcut.OR.td<=pi/(4*tailcut)) RETURN
++    IF (td<0.8_dp) THEN
++      DO n=0,CEILING(2*td*tailcut/pi)
++        arg=(2*n+1)*pi/(4*td)
++        w=w+EXP(-arg*arg)
++      ENDDO
++      w=w*sqrtpi/td
++    ELSE
++      w=1
++      DO n=1,CEILING(tailcut/(2*td))
++        arg=2*n*td
++        w=w+2*(-1)**n*EXP(-arg*arg)
++      ENDDO
++    ENDIF
++    w=w*EXP(-ta*ta)
++  END FUNCTION
 +
 +  SUBROUTINE difference_matrix(s,c,mmax,mat)
 +    INTEGER, INTENT(IN) :: mmax

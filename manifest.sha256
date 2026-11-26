@@ -1,6 +1,6 @@
 8f46ca8f2c4cd3a734b507c5ff6e1863512ee4c2155088f549b7cd1b51c9a792  ./.gitattributes
 d1f1af4bfd310d687f3281282f3530fcda20ee6811ba26b807c10375277d9e0e  ./.gitignore
-fd0512fcb5f9d5e2fa76a8aceac3f14460af870c368b60b6e4e689f7e915327b  ./README.md
-e96b5403efe3c73b173ce8ad85b45985bfb910d3bfc2972468c5242245488480  ./SOURCE_IDENTITIES.json
-276a49818ad008a9c03f690afb165b9159db4b1b79e443cc1b5cbbf171fce51c  ./apply_patch.sh
-24a9e73e5a6b686453532f4ac9faa3bf7531cfbfc6e484a6d1e9ebf908d4fb4d  ./vasp-6.6.1-scdm-compact-bands.patch
+7231897f1ebd7f86248f9c0d52aa7c1b2dbae890adfa4431de54bd3c5b08eadd  ./README.md
+e18a88404f3b26f97c51acd329da9142a5a19ad54e303bb39aac1b0a08800497  ./SOURCE_IDENTITIES.json
+a9edc1f9399c77a673b82b702319aad62a8da572b8ba6face2377d0f3ff571e7  ./apply_patch.sh
+048e25298a21097519ce345f11d241c0314cac9ab446934b9b13f436881ea306  ./vasp-6.6.1-scdm-compact-bands.patch

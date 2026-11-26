@@ -1,10 +1,10 @@
 {
   "schema": "private-native-wint-source-package-v1",
   "scope": "Source and deployment identities; numerical/runtime acceptance is separate",
-  "source_revision": "snapshot-f17647f05af33a1c42c2b76b4d00869dd2bb46858d504c2459b740aab4f078dd",
-  "source_snapshot_sha256": "f17647f05af33a1c42c2b76b4d00869dd2bb46858d504c2459b740aab4f078dd",
+  "source_revision": "snapshot-15cd70d182632ac6a08940b20b889eb5bc51addcdf2c56327cb992d4a0ec575f",
+  "source_snapshot_sha256": "15cd70d182632ac6a08940b20b889eb5bc51addcdf2c56327cb992d4a0ec575f",
   "payload": "vasp-6.6.1-scdm-compact-bands.patch",
-  "payload_sha256": "24a9e73e5a6b686453532f4ac9faa3bf7531cfbfc6e484a6d1e9ebf908d4fb4d",
+  "payload_sha256": "048e25298a21097519ce345f11d241c0314cac9ab446934b9b13f436881ea306",
   "paths": [
     "src/mlwf.F",
     "src/fock_glb.F",
@@ -30,13 +30,13 @@
       },
       "post": {
         "src/mlwf.F": "48a6d8351f3987d286221c88f268c925f8d5ed10ecbfaa855d1f3905a9df59ca",
-        "src/fock_glb.F": "cbe4973f5d95e27e432a9bae18d0a44095e1641fdf6fdc50ffdfae7e2786bece",
-        "src/fock.F": "9e89a0c30064b4b01e1ab3d8f30b8c0dd5ac2b16064f159008c3cbfd44bd1228",
-        "src/dmft.F": "ff638660da5fef4070d7cfe94a58bad76f2e34f22c5a7dc34e02d07e0a22a500",
+        "src/fock_glb.F": "7c38d2602c22ba01b7acd073c2e114472a26dabc062ee932f36979de3ada298e",
+        "src/fock.F": "ed162dac45843f6b6caa751e7df5fae53a5e7e09f564c669c23bd2b47d972766",
+        "src/dmft.F": "da31beb62778245973792709edd97e066bbdba4b3cda0bef9b28fe54261d6168",
         "src/.objects": "c970666a8bb6e3d204b7480acaa1581ee6efd7dc84143ac68d45d71d65b0c632",
         "src/ws_coulomb.F": "25e9d83a247e4b728ba7e9a496db7008c7e6710d268436aca0768a76b454f536",
         "src/wint_paw.F": "7b527fd19c4d6fc2d5729b8303c15fc2c85f7b10635da86e5e587223e75067f9",
-        "src/wint_layered.F": "8e90c8dc2b309ef3d612d29c4c6420c6e9b9bce77fedf97eca0d667328d5a038"
+        "src/wint_layered.F": "586207db35995907ec7dd054dded717bf5977404a7ca08e63fd11714ae56b8a1"
       }
     },
     "6.6.0": {
@@ -52,13 +52,13 @@
       },
       "post": {
         "src/mlwf.F": "48a6d8351f3987d286221c88f268c925f8d5ed10ecbfaa855d1f3905a9df59ca",
-        "src/fock_glb.F": "cbe4973f5d95e27e432a9bae18d0a44095e1641fdf6fdc50ffdfae7e2786bece",
-        "src/fock.F": "0ca30f86f3af886bd9eb4fd7afc10b0572dfd98d83e80c357818e5979e6fee19",
-        "src/dmft.F": "ff638660da5fef4070d7cfe94a58bad76f2e34f22c5a7dc34e02d07e0a22a500",
+        "src/fock_glb.F": "7c38d2602c22ba01b7acd073c2e114472a26dabc062ee932f36979de3ada298e",
+        "src/fock.F": "5dd1a362dc396076f91b9b378b6801e02c837a15f205615e97e996af8863905d",
+        "src/dmft.F": "da31beb62778245973792709edd97e066bbdba4b3cda0bef9b28fe54261d6168",
         "src/.objects": "c970666a8bb6e3d204b7480acaa1581ee6efd7dc84143ac68d45d71d65b0c632",
         "src/ws_coulomb.F": "25e9d83a247e4b728ba7e9a496db7008c7e6710d268436aca0768a76b454f536",
         "src/wint_paw.F": "7b527fd19c4d6fc2d5729b8303c15fc2c85f7b10635da86e5e587223e75067f9",
-        "src/wint_layered.F": "8e90c8dc2b309ef3d612d29c4c6420c6e9b9bce77fedf97eca0d667328d5a038"
+        "src/wint_layered.F": "586207db35995907ec7dd054dded717bf5977404a7ca08e63fd11714ae56b8a1"
       }
     }
   }
